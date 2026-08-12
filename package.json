@@ -1,0 +1,63 @@
+{
+  "name": "liaison",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server/index.ts",
+    "build": "vite build && tsc -p tsconfig.server.json",
+    "start": "node dist-server/server/index.js",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.tools.json",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "smoke:openai": "tsx scripts/smoke-openai.ts",
+    "retention": "tsx src/server/retention.ts",
+    "retention:production": "node dist-server/server/retention.js"
+  },
+  "dependencies": {
+    "@fastify/cookie": "latest",
+    "@fastify/formbody": "latest",
+    "@fastify/helmet": "latest",
+    "@fastify/middie": "^9.3.3",
+    "@fastify/rate-limit": "latest",
+    "@fastify/static": "latest",
+    "@fastify/websocket": "latest",
+    "better-sqlite3": "latest",
+    "dotenv": "latest",
+    "fastify": "latest",
+    "libphonenumber-js": "latest",
+    "lucide-react": "latest",
+    "openai": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "twilio": "latest",
+    "ws": "^8.21.3",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@playwright/test": "latest",
+    "@types/better-sqlite3": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "latest",
+    "eslint": "latest",
+    "eslint-plugin-react-hooks": "latest",
+    "eslint-plugin-react-refresh": "latest",
+    "globals": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "typescript-eslint": "latest",
+    "vite": "latest",
+    "vitest": "latest"
+  }
+}
