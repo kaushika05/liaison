@@ -1,0 +1,27 @@
+{
+  "protocolVersion": 1,
+  "caseId": "case-example-001",
+  "userFirstName": "Alex",
+  "companyName": "Example Wireless",
+  "phoneNumberE164": "+12025550124",
+  "issueSummary": "A duplicate fee appears on the latest statement.",
+  "chronology": [
+    {
+      "id": "chronology-001",
+      "date": "2026-08-10",
+      "event": "The statement showed two identical fees."
+    }
+  ],
+  "desiredOutcome": "Remove the duplicate fee and provide a case number.",
+  "acceptableAlternatives": [
+    "Apply an equal account credit."
+  ],
+  "unacceptableOutcomes": [
+    "A new recurring charge."
+  ],
+  "knownFacts": [
+    "Only one service change was requested."
+  ],
+  "unresolvedQuestions": [],
+  "autonomyMode": "COPILOT"
+}

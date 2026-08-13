@@ -1,6 +1,6 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import Fastify, { LogController, type FastifyInstance, type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import formbody from "@fastify/formbody";
 import helmet from "@fastify/helmet";
@@ -18,6 +18,8 @@ import { LiaisonDatabase } from "./database/db.js";
 import { DisclosureStore } from "./security/disclosures.js";
 import { ModelService } from "./agent/model-service.js";
 import { CallService } from "./services/call-service.js";
+import { MessagingOrchestrator } from "./services/messaging-orchestrator.js";
+import { createEmptyTwilioMessagingResponse, type ProviderFormParameters } from "./messaging/adapter.js";
 
 const idSchema=z.object({caseId:z.string().uuid()}); const callIdSchema=z.object({callId:z.string().uuid()});
 const approvalParams=z.object({callId:z.string().uuid(),approvalId:z.string().uuid()});
@@ -27,11 +29,11 @@ function sessionId(request:FastifyRequest):string|null{ const raw=request.cookie
 function tokenSecret(config:Config){return config.CALL_TOKEN_SECRET||config.SESSION_SECRET||"liaison-development-call-token";}
 function tokenCallId(token:string,config:Config):string|null{ const value=verifyToken<{callId:string}>(token,tokenSecret(config)); return value?.callId??null; }
 
-export interface AppContext { app:FastifyInstance; service:CallService; database:LiaisonDatabase; disclosures:DisclosureStore }
+export interface AppContext { app:FastifyInstance; service:CallService; messaging:MessagingOrchestrator; database:LiaisonDatabase; disclosures:DisclosureStore }
 export async function buildApp(overrides:Partial<Config>={},options:{serveClient?:boolean;databasePath?:string}={}):Promise<AppContext>{
   const config={...loadConfig(),...overrides,DATABASE_PATH:options.databasePath??overrides.DATABASE_PATH??loadConfig().DATABASE_PATH};
-  const app=Fastify({logger:config.NODE_ENV==="test"?false:{level:config.LOG_LEVEL,redact:["req.headers.authorization","req.headers.cookie","res.headers.set-cookie"]},bodyLimit:256*1024,trustProxy:config.TRUST_PROXY,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
-  const database=new LiaisonDatabase(config.DATABASE_PATH); const disclosures=new DisclosureStore(); const service=new CallService(config,database,disclosures,new ModelService(config,(item)=>app.log.info({event:"model_response",...item},"OpenAI response completed")));await service.recoverInterruptedCall();
+  const app=Fastify({logger:config.NODE_ENV==="test"?false:{level:config.LOG_LEVEL,redact:["req.headers.authorization","req.headers.cookie","res.headers.set-cookie"]},logController:new LogController({disableRequestLogging:true}),bodyLimit:256*1024,routerOptions:{maxParamLength:512},trustProxy:config.TRUST_PROXY,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
+  const database=new LiaisonDatabase(config.DATABASE_PATH); const disclosures=new DisclosureStore(); const models=new ModelService(config,(item)=>app.log.info({event:"model_response",...item},"Model response completed"));const service=new CallService(config,database,disclosures,models);await service.recoverInterruptedCall();const messaging=new MessagingOrchestrator(config,database,service,models);messaging.start();
   await app.register(cookie,{secret:config.SESSION_SECRET||"liaison-development-session-secret-change-me"});
   await app.register(formbody); await app.register(helmet,{contentSecurityPolicy:config.NODE_ENV==="production"?{directives:{defaultSrc:["'self'"],scriptSrc:["'self'"],styleSrc:["'self'"],imgSrc:["'self'","data:"],connectSrc:["'self'"]}}:false});
   await app.register(rateLimit,{global:true,max:180,timeWindow:"1 minute"}); await app.register(websocket);
@@ -55,16 +57,22 @@ export async function buildApp(overrides:Partial<Config>={},options:{serveClient
   });
   app.post("/api/auth/logout",async(request,reply)=>{const id=sessionId(request);if(id)sessions.delete(id);reply.clearCookie("liaison_session",{path:"/"});return {authenticated:false};});
 
+  app.get("/api/messaging/thread",async()=>messaging.snapshot());
+  app.post("/api/messaging/messages",async(request)=>messaging.receiveWebText(z.object({text:z.string().trim().min(1).max(4_000)}).parse(request.body).text));
+  app.get("/api/actions/:token",async(request)=>messaging.secureAction(z.object({token:z.string().min(20).max(200)}).parse(request.params).token));
+  app.post("/api/actions/:token",async(request)=>{const token=z.object({token:z.string().min(20).max(200)}).parse(request.params).token;const body=z.object({decision:z.enum(["APPROVE","REJECT"]),confirmation:z.literal("CONFIRM").optional(),replacement:z.string().trim().min(1).max(400).optional()}).parse(request.body);return messaging.resolveSecureAction(token,body);});
+
   app.get("/api/cases",async()=>({cases:service.listCases(),activeCall:database.getActiveCall()?.id??null}));
   app.post("/api/cases",async(request,reply)=>reply.code(201).send(await service.createCase(request.body)));
   app.get("/api/cases/:caseId",async(request)=>service.getCase(idSchema.parse(request.params).caseId)??(()=>{throw new Error("CASE_NOT_FOUND")})());
-  app.delete("/api/cases/:caseId",async(request,reply)=>{service.deleteCase(idSchema.parse(request.params).caseId);return reply.code(204).send();});
+  app.post("/api/cases/:caseId/disclosures",async(request,reply)=>reply.code(201).send(service.addSecureDisclosure(idSchema.parse(request.params).caseId,request.body)));
+  app.delete("/api/cases/:caseId",async(request,reply)=>{z.object({confirmation:z.literal("DELETE"),acknowledged:z.literal(true)}).strict().parse(request.body);messaging.deleteCase(idSchema.parse(request.params).caseId);return reply.code(204).send();});
   app.post("/api/cases/:caseId/plan",async(request)=>service.generatePlan(idSchema.parse(request.params).caseId));
   app.patch("/api/cases/:caseId/plan",async(request)=>service.savePlan(idSchema.parse(request.params).caseId,request.body));
   app.post("/api/cases/:caseId/plan/approve",async(request)=>service.approvePlan(idSchema.parse(request.params).caseId));
   app.get("/api/simulator/scenarios",async()=>({scenarios:service.listScenarios()}));
-  app.post("/api/cases/:caseId/simulate",async(request)=>{const body=z.object({scenarioId:z.string(),accelerated:z.boolean().default(true)}).parse(request.body);return service.startSimulation(idSchema.parse(request.params).caseId,body.scenarioId,body.accelerated);});
-  app.post("/api/cases/:caseId/calls",async(request)=>{z.object({confirmed:z.literal(true),privacyConfirmed:z.literal(true)}).parse(request.body);return service.startLive(idSchema.parse(request.params).caseId);});
+  app.post("/api/cases/:caseId/simulate",async(request)=>{if(config.NODE_ENV==="production")throw new Error("MESSAGING_AUTHORIZATION_REQUIRED: Start the simulator through the messaging thread with its exact one-time CALL code.");const body=z.object({scenarioId:z.string(),accelerated:z.boolean().default(true)}).parse(request.body);return service.startSimulation(idSchema.parse(request.params).caseId,body.scenarioId,body.accelerated);});
+  app.post("/api/cases/:caseId/calls",async(request)=>{z.object({confirmed:z.literal(true),privacyConfirmed:z.literal(true)}).parse(request.body);throw new Error("CALL_AUTHORIZATION_REQUIRED: Approve the plan in the messaging thread and reply with the exact one-time CALL code.");});
 
   app.get("/api/calls/:callId",async(request)=>service.snapshot(callIdSchema.parse(request.params).callId));
   app.get("/api/calls/:callId/events",async(request,reply)=>{
@@ -79,33 +87,36 @@ export async function buildApp(overrides:Partial<Config>={},options:{serveClient
   app.post("/api/calls/:callId/hangup",async(request)=>service.hangup(callIdSchema.parse(request.params).callId));
   app.post("/api/calls/:callId/private-instruction",async(request)=>service.privateInstruction(callIdSchema.parse(request.params).callId,z.object({text:z.string().min(1).max(1000)}).parse(request.body).text));
   app.post("/api/calls/:callId/exact-text",async(request)=>service.exactText(callIdSchema.parse(request.params).callId,z.object({text:z.string().min(1).max(400)}).parse(request.body).text));
-  app.post("/api/calls/:callId/approvals/:approvalId/approve",async(request)=>service.approve(approvalParams.parse(request.params).callId,approvalParams.parse(request.params).approvalId));
+  app.post("/api/calls/:callId/approvals/:approvalId/approve",async(request)=>{const p=approvalParams.parse(request.params);const b=z.object({confirmation:z.literal("CONFIRM").optional()}).parse(request.body??{});return service.approve(p.callId,p.approvalId,undefined,b.confirmation==="CONFIRM");});
   app.post("/api/calls/:callId/approvals/:approvalId/reject",async(request)=>{const p=approvalParams.parse(request.params);const b=z.object({instruction:z.string().max(500).optional()}).parse(request.body??{});return service.reject(p.callId,p.approvalId,b.instruction);});
-  app.post("/api/calls/:callId/approvals/:approvalId/replace",async(request)=>{const p=approvalParams.parse(request.params);return service.approve(p.callId,p.approvalId,z.object({text:z.string().min(1).max(400)}).parse(request.body).text);});
+  app.post("/api/calls/:callId/approvals/:approvalId/replace",async(request)=>{const p=approvalParams.parse(request.params);const b=z.object({text:z.string().min(1).max(400),confirmation:z.literal("CONFIRM").optional()}).parse(request.body);return service.approve(p.callId,p.approvalId,b.text,b.confirmation==="CONFIRM");});
   app.get("/api/calls/:callId/outcome",async(request)=>service.exportJson(callIdSchema.parse(request.params).callId));
   app.get("/api/calls/:callId/export.json",async(request,reply)=>{const id=callIdSchema.parse(request.params).callId;reply.header("Content-Disposition",`attachment; filename=liaison-${id}.json`).type("application/json");return service.exportJson(id);});
   app.get("/api/calls/:callId/export.txt",async(request,reply)=>{const id=callIdSchema.parse(request.params).callId;reply.header("Content-Disposition",`attachment; filename=liaison-${id}.txt`).type("text/plain; charset=utf-8");return service.exportText(id);});
 
   const validateTwilio=(request:FastifyRequest,url:string)=>{const signature=String(request.headers["x-twilio-signature"]??"");const body=request.body&&typeof request.body==="object"?request.body as Record<string,string>:{};return twilio.validateRequest(config.TWILIO_AUTH_TOKEN,signature,url,body);};
+  const providerForm=(request:FastifyRequest):ProviderFormParameters=>{if(!request.body||typeof request.body!=="object"||Array.isArray(request.body))return{};const result:Record<string,string|string[]>={};for(const[key,value]of Object.entries(request.body as Record<string,unknown>)){if(typeof value==="string")result[key]=value;else if(Array.isArray(value)&&value.every((item)=>typeof item==="string"))result[key]=value;}return result;};
+  app.post("/webhooks/twilio/messaging/inbound",async(request,reply)=>{const exactUrl=`${config.PUBLIC_BASE_URL.replace(/\/$/,"")}${request.url}`;const adapter=messaging.twilioAdapterForUrl("INBOUND_MESSAGE",exactUrl);if(!adapter)return reply.code(503).send();const result=await messaging.acceptTwilioInbound({adapter,request:{callbackKind:"INBOUND_MESSAGE",signature:String(request.headers["x-twilio-signature"]??""),form:providerForm(request)}});if(!result.accepted&&!result.reason?.includes("DISABLED"))return reply.code(403).send();reply.type("text/xml");return createEmptyTwilioMessagingResponse();});
+  app.post("/webhooks/twilio/messaging/status",async(request,reply)=>{const exactUrl=`${config.PUBLIC_BASE_URL.replace(/\/$/,"")}${request.url}`;const adapter=messaging.twilioAdapterForUrl("STATUS_CALLBACK",exactUrl);if(!adapter)return reply.code(503).send();const result=await messaging.acceptTwilioStatus({adapter,request:{callbackKind:"STATUS_CALLBACK",signature:String(request.headers["x-twilio-signature"]??""),form:providerForm(request)}});if(!result.accepted)return reply.code(403).send();return reply.code(204).send();});
   app.post("/webhooks/twilio/voice/:signedToken",async(request,reply)=>{
-    const token=z.object({signedToken:z.string()}).parse(request.params).signedToken; const callId=tokenCallId(token,config); if(!callId)return reply.code(403).send("Invalid call token"); const url=`${config.PUBLIC_BASE_URL}${request.url}`; if(!validateTwilio(request,url))return reply.code(403).send("Invalid Twilio signature");
+    const token=z.object({signedToken:z.string()}).parse(request.params).signedToken; const callId=tokenCallId(token,config); if(!callId)return reply.code(403).send("Invalid call token"); const url=`${config.PUBLIC_BASE_URL}${request.url}`; if(!validateTwilio(request,url))return reply.code(403).send("Invalid Twilio signature");service.assertTwilioCallbackIdentity(callId,request.body as Record<string,unknown>);
     const voice=new twilio.twiml.VoiceResponse(); const connect=voice.connect({action:`${config.PUBLIC_BASE_URL}/webhooks/twilio/conversation-action/${encodeURIComponent(token)}`,method:"POST"}); const relay=connect.conversationRelay({url:`${config.PUBLIC_WSS_URL}/webhooks/twilio/conversation-relay/${encodeURIComponent(token)}`,dtmfDetection:true,language:"en-US",partialPrompts:false,interruptible:"speech",interruptSensitivity:"medium",ignorebackchannel:"true",welcomeGreetingInterruptible:"none"}); relay.parameter({name:"callReference",value:callId}); reply.type("text/xml");return voice.toString();
   });
-  app.post("/webhooks/twilio/status/:signedToken",async(request,reply)=>{const token=z.object({signedToken:z.string()}).parse(request.params).signedToken;const callId=tokenCallId(token,config);if(!callId)return reply.code(403).send();if(!validateTwilio(request,`${config.PUBLIC_BASE_URL}${request.url}`))return reply.code(403).send();const status=String((request.body as Record<string,unknown>)?.CallStatus??"");await service.twilioStatus(callId,status);return reply.code(204).send();});
-  app.post("/webhooks/twilio/conversation-action/:signedToken",async(request,reply)=>{const token=z.object({signedToken:z.string()}).parse(request.params).signedToken;const callId=tokenCallId(token,config);if(!callId)return reply.code(403).send();if(!validateTwilio(request,`${config.PUBLIC_BASE_URL}${request.url}`))return reply.code(403).send();const status=String((request.body as Record<string,unknown>)?.SessionStatus??"ended");await service.conversationEnded(callId,status);reply.type("text/xml");return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response/>";});
+  app.post("/webhooks/twilio/status/:signedToken",async(request,reply)=>{const token=z.object({signedToken:z.string()}).parse(request.params).signedToken;const callId=tokenCallId(token,config);if(!callId)return reply.code(403).send();if(!validateTwilio(request,`${config.PUBLIC_BASE_URL}${request.url}`))return reply.code(403).send();const body=request.body as Record<string,unknown>;service.assertTwilioCallbackIdentity(callId,body);const status=String(body?.CallStatus??"");await service.twilioStatus(callId,status);return reply.code(204).send();});
+  app.post("/webhooks/twilio/conversation-action/:signedToken",async(request,reply)=>{const token=z.object({signedToken:z.string()}).parse(request.params).signedToken;const callId=tokenCallId(token,config);if(!callId)return reply.code(403).send();if(!validateTwilio(request,`${config.PUBLIC_BASE_URL}${request.url}`))return reply.code(403).send();const body=request.body as Record<string,unknown>;service.assertTwilioCallbackIdentity(callId,body);const status=String(body?.SessionStatus??"ended");await service.conversationEnded(callId,status);reply.type("text/xml");return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response/>";});
   app.get("/webhooks/twilio/conversation-relay/:signedToken",{websocket:true},(socket,request)=>{
     const token=z.object({signedToken:z.string()}).parse(request.params).signedToken;const callId=tokenCallId(token,config);const signature=String(request.headers["x-twilio-signature"]??"");const url=`${config.PUBLIC_WSS_URL}${request.url}`;
     if(!callId||!twilio.validateRequest(config.TWILIO_AUTH_TOKEN,signature,url,{})){socket.close(1008,"Signature validation failed");return;} service.attachRelaySocket(callId,socket);
-    socket.on("message",(data:RawData)=>{try{const message=JSON.parse(data.toString()) as unknown;void service.relayMessage(callId,message).catch(()=>socket.close(1011,"Relay processing failed"));}catch{socket.close(1007,"Malformed JSON");}}); socket.once("close",()=>void service.relayClosed(callId));
+    socket.on("message",(data:RawData)=>{try{const message=JSON.parse(data.toString()) as unknown;void service.relayMessage(callId,message).catch(()=>socket.close(1011,"Relay processing failed"));}catch{socket.close(1007,"Malformed JSON");}}); socket.once("close",()=>void service.relayClosed(callId).catch((error)=>app.log.error({error:error instanceof Error?error.message:"UNKNOWN"},"Relay close handling failed")));
   });
 
-  app.setErrorHandler((error,_request,reply)=>{const known=error instanceof ZodError;const message=error instanceof Error?error.message:"INTERNAL_ERROR";const code=known?"VALIDATION_ERROR":message.split(":")[0]||"INTERNAL_ERROR";const status=known?400:code.endsWith("NOT_FOUND")?404:["ANOTHER_CALL_IS_ACTIVE","STALE_APPROVAL","CALL_ALREADY_ENDED"].includes(code)?409:code==="AUTH_REQUIRED"?401:code==="INTERNAL_ERROR"?500:400;reply.code(status).send({error:{code,message:status===500?"An internal error occurred.":message}});});
+  app.setErrorHandler((error,_request,reply)=>{const known=error instanceof ZodError;const message=error instanceof Error?error.message:"INTERNAL_ERROR";const code=known?"VALIDATION_ERROR":message.split(":")[0]||"INTERNAL_ERROR";const status=known?400:code.endsWith("NOT_FOUND")?404:["ANOTHER_CALL_IS_ACTIVE","STALE_APPROVAL","CALL_ALREADY_ENDED","ACTIVE_CALL_CANNOT_BE_DELETED"].includes(code)?409:code==="AUTH_REQUIRED"?401:code==="INTERNAL_ERROR"?500:400;reply.code(status).send({error:{code,message:status===500?"An internal error occurred.":message}});});
 
   if(options.serveClient!==false){
     if(config.NODE_ENV==="production"){await app.register(staticFiles,{root:path.resolve("dist")});app.setNotFoundHandler((request,reply)=>request.method==="GET"?reply.sendFile("index.html"):reply.code(404).send({error:{code:"NOT_FOUND",message:"Not found"}}));}
     else {await app.register(middie);const {createServer}=await import("vite");const vite=await createServer({server:{middlewareMode:true},appType:"spa"});app.use((request,response,next)=>{const url=request.url??"";if(url.startsWith("/api/")||url==="/health"||url==="/ready"||url.startsWith("/webhooks/"))return next();return vite.middlewares(request,response,next)});app.addHook("onClose",async()=>vite.close());}
   }
   const cleanup=setInterval(()=>{const now=Date.now();for(const[id,expiry]of sessions)if(expiry<now)sessions.delete(id);},60_000);cleanup.unref();
-  app.addHook("onClose",async()=>{clearInterval(cleanup);disclosures.clearAll();database.close();});
-  return {app,service,database,disclosures};
+  app.addHook("onClose",async()=>{clearInterval(cleanup);await service.shutdown();await messaging.stop();disclosures.clearAll();database.close();});
+  return {app,service,messaging,database,disclosures};
 }

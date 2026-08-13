@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "protocolVersion": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "id": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "caseId": {
+      "$ref": "#/$defs/__schema2"
+    },
+    "callId": {
+      "$ref": "#/$defs/__schema3"
+    },
+    "tier": {
+      "$ref": "#/$defs/__schema4"
+    },
+    "status": {
+      "$ref": "#/$defs/__schema5"
+    },
+    "title": {
+      "$ref": "#/$defs/__schema6"
+    },
+    "representativeRequest": {
+      "$ref": "#/$defs/__schema7"
+    },
+    "currentGoal": {
+      "$ref": "#/$defs/__schema8"
+    },
+    "proposedAction": {
+      "$ref": "#/$defs/__schema9"
+    },
+    "consequences": {
+      "$ref": "#/$defs/__schema10"
+    },
+    "choices": {
+      "$ref": "#/$defs/__schema11"
+    },
+    "amountCents": {
+      "$ref": "#/$defs/__schema13"
+    },
+    "disclosureCardId": {
+      "$ref": "#/$defs/__schema14"
+    },
+    "createdAt": {
+      "$ref": "#/$defs/__schema15"
+    },
+    "expiresAt": {
+      "$ref": "#/$defs/__schema15"
+    },
+    "resolvedAt": {
+      "$ref": "#/$defs/__schema16"
+    },
+    "resolutionChannel": {
+      "$ref": "#/$defs/__schema17"
+    },
+    "resolutionMessageId": {
+      "$ref": "#/$defs/__schema18"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "id",
+    "caseId",
+    "callId",
+    "tier",
+    "status",
+    "title",
+    "representativeRequest",
+    "currentGoal",
+    "proposedAction",
+    "consequences",
+    "choices",
+    "createdAt",
+    "expiresAt"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "default": 1,
+      "type": "number",
+      "const": 1,
+      "description": "Liaison Universal Support Protocol major version."
+    },
+    "__schema1": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema2": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema3": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema4": {
+      "type": "string",
+      "enum": [
+        "INFORMATIONAL",
+        "LOW_CONSEQUENCE",
+        "SENSITIVE",
+        "MATERIAL",
+        "PROHIBITED"
+      ]
+    },
+    "__schema5": {
+      "type": "string",
+      "enum": [
+        "PENDING",
+        "APPROVED",
+        "REJECTED",
+        "REPLACED",
+        "EXPIRED",
+        "CANCELLED"
+      ]
+    },
+    "__schema6": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "__schema7": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "__schema8": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "__schema9": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "__schema10": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "__schema11": {
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema12"
+      }
+    },
+    "__schema12": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "shortCode": {
+          "type": "string",
+          "pattern": "^[A-C]$"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "effect": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "id",
+        "shortCode",
+        "label",
+        "effect"
+      ],
+      "additionalProperties": false
+    },
+    "__schema13": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "__schema14": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema15": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "__schema16": {
+      "$ref": "#/$defs/__schema15"
+    },
+    "__schema17": {
+      "type": "string",
+      "enum": [
+        "SMS",
+        "WEB"
+      ]
+    },
+    "__schema18": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    }
+  },
+  "$id": "https://liaison-protocol.invalid/v1/attention-request.schema.json",
+  "title": "AttentionRequest"
+}

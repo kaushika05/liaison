@@ -2,13 +2,16 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { parsePhoneNumberFromString } from "libphonenumber-js";
 import type { AgentDecision, ApprovalRequest, AuthorityEnvelope, CallState, OutcomeReport, TranscriptTurn } from "../../shared/domain.js";
 import { agentDecisionSchema, defaultAuthority } from "../../shared/domain.js";
+import { redactInboundSmsSecrets } from "../messaging/secrets.js";
+
+export const prohibitedSecretRefusalText = "I can't provide passwords or one-time codes. Is there another permitted way to authenticate?";
 
 const transitions: Record<CallState, ReadonlySet<CallState>> = {
   PREPARING: new Set(["DIALING", "FAILED"]),
   DIALING: new Set(["CONNECTED", "FAILED", "ENDING"]),
   CONNECTED: new Set(["IVR", "WAITING_FOR_REPRESENTATIVE", "DISCLOSING_ASSISTANT", "ENDING", "FAILED"]),
   IVR: new Set(["IVR", "ON_HOLD", "WAITING_FOR_REPRESENTATIVE", "DISCLOSING_ASSISTANT", "ENDING", "FAILED"]),
-  ON_HOLD: new Set(["ON_HOLD", "WAITING_FOR_REPRESENTATIVE", "DISCLOSING_ASSISTANT", "NEGOTIATING", "ENDING", "FAILED"]),
+  ON_HOLD: new Set(["ON_HOLD", "WAITING_FOR_REPRESENTATIVE", "DISCLOSING_ASSISTANT", "NEGOTIATING", "NEEDS_USER", "ENDING", "FAILED"]),
   WAITING_FOR_REPRESENTATIVE: new Set(["ON_HOLD", "DISCLOSING_ASSISTANT", "ENDING", "FAILED"]),
   DISCLOSING_ASSISTANT: new Set(["DISCLOSING_ASSISTANT", "EXPLAINING_ISSUE", "ENDING", "FAILED"]),
   EXPLAINING_ISSUE: new Set(["AUTHENTICATING", "NEGOTIATING", "ON_HOLD", "NEEDS_USER", "VERIFYING_OUTCOME", "ENDING", "FAILED"]),
@@ -73,6 +76,57 @@ export function prohibitedSecretReason(text: string): string | null {
   return prohibitedSecretPatterns.find(([, pattern]) => pattern.test(text))?.[0] ?? null;
 }
 
+const prohibitedUserActionPatterns: Array<[string, RegExp]> = [
+  ["PURCHASE", /\b(?:please|kindly|go ahead and|you may|i authorize you to|i approve you to|i want you to) (?:buy|purchase|order)\b/g],
+  ["PURCHASE", /\b(?:make|complete|authorize|approve|accept|proceed with|go ahead with) (?:an? |the )?(?:purchase|order)\b/g],
+  ["PURCHASE", /\bplace (?:an? |the )?order\b/g],
+  ["PURCHASE", /\b(?:buy|purchase|order) (?:it|this|that|one|the (?:item|product|upgrade|plan|service|subscription)|an? (?:item|product|upgrade|plan|service|subscription))\b/g],
+  ["PURCHASE", /\b(?:charge|bill) (?:me|my account|the account)\b/g],
+  ["PURCHASE", /\b(?:accept|approve|authorize|agree to|go ahead with)(?: [a-z0-9$]+){0,8} (?:purchase|paid upgrade|fee|charge|order)\b/g],
+  ["NEW_CONTRACT", /\b(?:accept|approve|authorize|agree to|enter into|sign|sign up for|enroll in|renew|start)(?: [a-z0-9$]+){0,8} (?:new contract|contract|service agreement|subscription|membership|recurring plan|recurring commitment|term agreement)\b/g],
+  ["NEW_CONTRACT", /\b(?:create|open|take out)(?: [a-z0-9$]+){0,8} (?:new contract|contract|subscription|membership|recurring plan|recurring commitment)\b/g],
+  ["IMPERSONATION", /\b(?:impersonate|pretend to be|pose as|claim to be|say (?:that )?(?:you are|you re)|tell (?:them|the representative) (?:that )?(?:you are|you re))(?: [a-z0-9]+){0,8} (?:me|account holder|customer|user)\b/g],
+  ["IMPERSONATION", /\b(?:pretend (?:that )?you (?:are|re)|speak as|act as|represent yourself as)(?: [a-z0-9]+){0,8} (?:me|account holder|customer|user)\b/g],
+  ["IMPERSONATION", /\bi am (?:the )?(?:account holder|customer|user)\b/g],
+  ["LEGAL_WAIVER", /\b(?:waive|give up|relinquish|surrender|release)(?: [a-z0-9]+){0,6} (?:right|rights|claim|claims|remedy|remedies|liability)\b/g],
+  ["MATERIAL_FINANCIAL_OUTCOME", /\b(?:accept(?:s|ed)?|approv(?:e|es|ed)|authoriz(?:e|es|ed)|agree(?:s|d)? to|take(?:s|n)?|appl(?:y|ies|ied)|receiv(?:e|es|ed))(?: [a-z0-9$]+){0,8} (?:credit|refund|discount|financial outcome)\b/g],
+  ["MATERIAL_ACCOUNT_CHANGE", /\b(?:accept|approve|authorize|agree to|change|switch|move|upgrade|downgrade)(?: [a-z0-9$]+){0,8} (?:plan|account|service tier|subscription)\b/g],
+  ["MATERIAL_CANCELLATION", /\b(?:cancel|terminate|close|disconnect)(?: [a-z0-9$]+){0,6} (?:service|account|plan|subscription|membership)\b/g],
+  ["MATERIAL_SCHEDULING", /\b(?:book|schedule|reschedule|confirm|accept)(?: [a-z0-9$]+){0,8} (?:appointment|visit|service window|time slot)\b/g],
+  ["AMBIGUOUS_MATERIAL_ASSENT", /\b(?:yes i agree to that|that works for me|please (?:apply|accept|approve|confirm|cancel|change|schedule) (?:it|that|the offer)|please go ahead with (?:it|that|the offer)|go ahead and (?:apply|accept|approve|confirm|cancel|change|schedule) (?:it|that))\b/g],
+];
+
+function foldPolicyText(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/[^a-z0-9$]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function actionIsExplicitlyDenied(text: string, actionIndex: number): boolean {
+  const prefix = text.slice(Math.max(0, actionIndex - 100), actionIndex).trimEnd();
+  return /\b(?:do not|don t|never|must not|cannot|can t|not authorized to|not approve(?:d)? to|decline(?:d)?|reject(?:ed)?|refuse(?:d)? to)(?: [a-z0-9$]+){0,6}$/.test(prefix);
+}
+
+/** Screens user-authored speech and steering before it can become persisted or externally executed. */
+export function prohibitedUserActionReason(text: string, forbiddenActions: readonly string[] = []): string | null {
+  const folded = foldPolicyText(text);
+  if (!folded) return null;
+  for (const [reason, pattern] of prohibitedUserActionPatterns) {
+    pattern.lastIndex = 0;
+    for (const match of folded.matchAll(pattern)) {
+      if (!actionIsExplicitlyDenied(folded, match.index ?? 0)) return reason;
+    }
+  }
+  for (const forbiddenAction of forbiddenActions) {
+    const forbidden = foldPolicyText(forbiddenAction).replace(/^(?:do not|don t|never|must not|cannot|can t|not authorized to)\s+/,"");
+    if (!forbidden) continue;
+    let index = folded.indexOf(forbidden);
+    while (index >= 0) {
+      if (!actionIsExplicitlyDenied(folded, index)) return "AUTHORITY_FORBIDDEN_ACTION";
+      index = folded.indexOf(forbidden, index + forbidden.length);
+    }
+  }
+  return null;
+}
+
 export function validateDtmf(digits: string, sensitive = false): boolean {
   if (!/^[0-9w#*]+$/.test(digits)) return false;
   return sensitive ? digits.length <= 64 : digits.length <= 4;
@@ -82,7 +136,7 @@ export interface PolicyContext {
   state: CallState; authority: AuthorityEnvelope; paused: boolean; pendingApproval: ApprovalRequest | null;
   disclosureDelivered: boolean; consentStatus: "UNKNOWN" | "ACCEPTED" | "REFUSED" | "AMBIGUOUS";
   durationSeconds: number; maximumDurationSeconds: number; generation: number; expectedGeneration: number;
-  executedKeys: ReadonlySet<string>;
+  executedKeys: ReadonlySet<string>; decisionSource?: "MODEL" | "SIMULATOR";
 }
 
 export type PolicyResult = { allowed: true; normalizedAction: AgentDecision } | { allowed: false; violationCode: string; safeFallback: "REQUEST_USER" | "REFUSE_REMOTE_REQUEST" | "WAIT" | "END_CALL" };
@@ -97,19 +151,34 @@ export function validateDecision(raw: unknown, context: PolicyContext): PolicyRe
   if (context.pendingApproval && decision.action !== "WAIT") return { allowed: false, violationCode: "APPROVAL_PENDING", safeFallback: "WAIT" };
   if (context.paused && decision.action !== "WAIT") return { allowed: false, violationCode: "USER_PAUSED", safeFallback: "WAIT" };
   if (decision.action === "SPEAK") {
+    const isControlledSecretRefusal=decision.policyReasonCode==="PROHIBITED_SECRET_REFUSAL"&&decision.text===prohibitedSecretRefusalText;
+    if(!isControlledSecretRefusal&&redactInboundSmsSecrets(decision.text).blocked)return{allowed:false,violationCode:"SENSITIVE_VALUE_REQUIRES_SECURE_DISCLOSURE",safeFallback:"REFUSE_REMOTE_REQUEST"};
     if (prohibitedSecretReason(decision.text)) return { allowed: false, violationCode: "PROHIBITED_SECRET", safeFallback: "REFUSE_REMOTE_REQUEST" };
+    const prohibitedAction = prohibitedUserActionReason(decision.text, context.authority.forbiddenActions);
+    if (prohibitedAction) return { allowed: false, violationCode: `PROHIBITED_USER_ACTION:${prohibitedAction}`, safeFallback: "REFUSE_REMOTE_REQUEST" };
     if (context.consentStatus === "REFUSED") return { allowed: false, violationCode: "CONSENT_REFUSED", safeFallback: "END_CALL" };
     if (!context.disclosureDelivered && decision.policyReasonCode !== "DISCLOSE_ACCESSIBILITY_ASSISTANT") return { allowed: false, violationCode: "DISCLOSURE_REQUIRED", safeFallback: "END_CALL" };
     if (context.disclosureDelivered && context.consentStatus !== "ACCEPTED" && !["EXPLAIN_APPROVED_BRIEF","CLARIFY_CONSENT"].includes(decision.policyReasonCode)) return { allowed: false, violationCode: "CONSENT_REQUIRED", safeFallback: "END_CALL" };
     if (!context.disclosureDelivered && !["CONNECTED", "IVR", "ON_HOLD", "WAITING_FOR_REPRESENTATIVE", "DISCLOSING_ASSISTANT"].includes(context.state)) return { allowed: false, violationCode: "DISCLOSURE_REQUIRED", safeFallback: "END_CALL" };
   }
-  if (decision.action === "SEND_DIGITS" && !validateDtmf(decision.digits)) return { allowed: false, violationCode: "INVALID_DTMF", safeFallback: "REQUEST_USER" };
+  if (decision.action === "SEND_DIGITS") {
+    if(!validateDtmf(decision.digits))return{allowed:false,violationCode:"INVALID_DTMF",safeFallback:"REQUEST_USER"};
+    if(!["IVR_NAVIGATION","IVR_MENU_SELECTION"].includes(decision.policyReasonCode))return{allowed:false,violationCode:"DTMF_PURPOSE_NOT_ALLOWLISTED",safeFallback:"REQUEST_USER"};
+  }
   if (decision.action === "REQUEST_APPROVAL") {
+    if(redactInboundSmsSecrets(decision.approval.proposedSpeech).blocked)return{allowed:false,violationCode:"SENSITIVE_VALUE_REQUIRES_SECURE_DISCLOSURE",safeFallback:"REFUSE_REMOTE_REQUEST"};
+    if (prohibitedSecretReason(decision.approval.proposedSpeech)) return { allowed:false, violationCode:"PROHIBITED_SECRET", safeFallback:"REFUSE_REMOTE_REQUEST" };
+    const prohibitedAction = prohibitedUserActionReason(decision.approval.proposedSpeech, context.authority.forbiddenActions);
+    if (prohibitedAction) return { allowed:false, violationCode:`PROHIBITED_USER_ACTION:${prohibitedAction}`, safeFallback:"REFUSE_REMOTE_REQUEST" };
     const permission={PERSONAL_DATA:context.authority.disclosePersonalData,FINANCIAL:context.authority.acceptFinancialOutcome,ACCOUNT_CHANGE:context.authority.modifyAccount,CANCELLATION:context.authority.cancelService,SCHEDULING:context.authority.scheduleCommitment,ALTERNATIVE_OUTCOME:context.authority.acceptAlternativeOutcome,END_UNRESOLVED:context.authority.endWithoutResolution}[decision.approval.category];
     if(permission==="DENY") return { allowed:false, violationCode:"AUTHORITY_DENIED", safeFallback:"REFUSE_REMOTE_REQUEST" };
     if (decision.approval.category === "FINANCIAL" && (decision.approval.amountCents ?? 0) > context.authority.maximumAuthorizedCostCents) {
       return { allowed: false, violationCode: "MONETARY_CAP_EXCEEDED", safeFallback: "REQUEST_USER" };
     }
+  }
+  if(decision.action==="END_CALL"&&["UNRESOLVED","PARTIALLY_RESOLVED","USER_REQUESTED"].includes(decision.reason)&&context.authority.endWithoutResolution!=="ALLOW"){
+    const trustedSimulatorTerminal=context.decisionSource==="SIMULATOR"&&decision.policyReasonCode==="TERMINAL_SCENARIO_RESULT"&&decision.reason!=="USER_REQUESTED";
+    if(!trustedSimulatorTerminal)return{allowed:false,violationCode:"END_CALL_REQUIRES_APPROVAL",safeFallback:"REQUEST_USER"};
   }
   const key = `${decision.action}:${decision.action === "SPEAK" ? decision.text : decision.action === "SEND_DIGITS" ? decision.digits : decision.policyReasonCode}`;
   if (context.executedKeys.has(key)) return { allowed: false, violationCode: "DUPLICATE_EXTERNAL_ACTION", safeFallback: "WAIT" };
@@ -141,20 +210,27 @@ export function estimateCost(durationSeconds: number, perMinuteUsd: number): num
 }
 
 function normalizeQuote(text: string): string { return text.normalize("NFKC").replace(/\s+/g, " ").trim(); }
+function foldedEvidenceText(text:string):string{return normalizeQuote(text).toLocaleLowerCase("en-US").replace(/[^a-z0-9$]+/g," ").replace(/\s+/g," ").trim();}
+function groundedValue(value:unknown,evidence:Array<{turnId:string;exactQuote:string}>,turnMap:Map<string,string>,allowContainedValue=false):boolean{
+  if(evidence.length===0)return false;
+  const valueText=foldedEvidenceText(typeof value==="string"?value:JSON.stringify(value));
+  if(!valueText)return false;
+  return evidence.some((ref)=>{const turn=turnMap.get(ref.turnId);if(!turn)return false;const quote=foldedEvidenceText(ref.exactQuote);return Boolean(quote&&foldedEvidenceText(turn).includes(quote)&&(quote===valueText||(allowContainedValue&&quote.includes(valueText))));});
+}
 
 export function validateOutcome(report: OutcomeReport, turns: TranscriptTurn[]): OutcomeReport {
   const turnMap = new Map(turns.map((turn) => [turn.id, normalizeQuote(turn.text)]));
   const evidenceValid = (evidence: Array<{ turnId: string; exactQuote: string }>) => evidence.length > 0 && evidence.every((ref) => turnMap.get(ref.turnId)?.includes(normalizeQuote(ref.exactQuote)));
-  const cleanGrounded = <T>(field: { value: T; evidence: Array<{ turnId: string; exactQuote: string }> } | null) => field && evidenceValid(field.evidence) ? field : null;
-  const cleanArray = <T>(items: Array<{ value: T; evidence: Array<{ turnId: string; exactQuote: string }> }>) => items.filter((item) => evidenceValid(item.evidence));
+  const cleanGrounded = <T>(field: { value: T; evidence: Array<{ turnId: string; exactQuote: string }> } | null,allowContainedValue=false) => field && evidenceValid(field.evidence) && groundedValue(field.value,field.evidence,turnMap,allowContainedValue) ? field : null;
+  const cleanArray = <T>(items: Array<{ value: T; evidence: Array<{ turnId: string; exactQuote: string }> }>) => items.filter((item) => evidenceValid(item.evidence)&&groundedValue(item.value,item.evidence,turnMap));
   const weak = /\b(look into|submit(?:ted)? a request|make|made a note|review|consider|investigat|escalat)\b/i;
   const resolution = cleanGrounded(report.resolution);
   const concreteResolution = resolution && !weak.test(String(resolution.value));
   return {
     ...report,
     status: report.status === "RESOLVED" && !concreteResolution ? "PARTIAL" : report.status,
-    summary: cleanGrounded(report.summary), representativeName: cleanGrounded(report.representativeName), department: cleanGrounded(report.department),
-    caseNumber: cleanGrounded(report.caseNumber), resolution,
+    summary: cleanGrounded(report.summary), representativeName: cleanGrounded(report.representativeName,true), department: cleanGrounded(report.department,true),
+    caseNumber: cleanGrounded(report.caseNumber,true), resolution,
     monetaryOutcomes: cleanArray(report.monetaryOutcomes), companyCommitments: cleanArray(report.companyCommitments),
     userActions: cleanArray(report.userActions), deadlines: cleanArray(report.deadlines), unresolvedItems: cleanArray(report.unresolvedItems),
   };

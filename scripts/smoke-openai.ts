@@ -19,11 +19,11 @@ const brief = await service.plan("release-smoke", "+13045550101", {
   authorizedAccountConfirmed: true,
   lowRiskConfirmed: true,
 });
-const telemetry = service.drainTelemetry()[0];
+const usage = service.drainUsageRecords()[0];
 
 process.stdout.write(`${JSON.stringify({
   ok: Boolean(brief.title && brief.strategySteps.length),
-  modelRequestId: Boolean(telemetry?.requestId),
-  responseId: Boolean(telemetry?.responseId),
-  tokens: telemetry?.totalTokens ?? 0,
+  modelRequestId: Boolean(usage?.requestId),
+  responseId: Boolean(usage?.responseId),
+  tokens: usage?.totalTokens ?? 0,
 })}\n`);

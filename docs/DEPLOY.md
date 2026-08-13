@@ -1,70 +1,83 @@
-# Deployment and real-call setup
+# Deployment
 
-Complete these steps before enabling a real call. Test only with a telephone number you own or whose participant has agreed to the test.
+The complete operator guide is [SELF_HOSTING.md](SELF_HOSTING.md); use [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) for a release gate and [TWILIO_SETUP.md](TWILIO_SETUP.md) for optional provider configuration.
 
-## 1. Twilio account
+## Safe production profile
 
-1. Create or select a Twilio project and complete identity/trial requirements.
-2. In Twilio Console, buy or configure a US number with Voice capability. Record its E.164 number for `TWILIO_FROM_NUMBER`.
-3. Copy the Account SID and Auth Token into the deployment secret store, never a committed file. Production API calls should use a restricted Twilio API key if your account policy supports it; signature validation still needs the auth token.
-4. Follow the official [ConversationRelay onboarding](https://www.twilio.com/docs/voice/conversationrelay/onboarding). Review and accept the Predictive and Generative AI/ML Features Addendum and confirm ConversationRelay access for the project.
-5. No inbound phone-number Voice URL is required for Liaison's outbound path. The application supplies its signed TwiML URL when it creates each call.
-
-## 2. Public service and environment
-
-Deploy a public HTTPS service whose WebSocket upgrade path is also reachable through WSS. Set:
+Build the repository's Dockerfile or use `docker compose`. A first deployment should use:
 
 ```text
 NODE_ENV=production
+PORT=3000
 PUBLIC_BASE_URL=https://liaison.example.com
 PUBLIC_WSS_URL=wss://liaison.example.com
 DATABASE_PATH=/data/liaison.db
-APP_ACCESS_KEY=<long unique key>
-SESSION_SECRET=<random 32+ bytes>
-CALL_TOKEN_SECRET=<different random 32+ bytes>
-TELEPHONY_MODE=twilio
-TWILIO_ACCOUNT_SID=AC...
-TWILIO_AUTH_TOKEN=<secret>
-TWILIO_FROM_NUMBER=+1...
+
+INSTANCE_MODE=personal
+APP_ACCESS_KEY=<long unique value>
+SESSION_SECRET=<independent random 32+ characters>
+CALL_TOKEN_SECRET=<independent random 32+ characters>
+ACTION_LINK_SECRET=<independent random 32+ characters>
+
+LLM_MODE=mock
+MESSAGING_MODE=web
+ALLOW_REAL_MESSAGING=false
+TELEPHONY_MODE=simulator
 ALLOW_REAL_CALLS=false
 ```
 
-Leave `ALLOW_REAL_CALLS=false` through initial health, login, and simulator testing. Configure OpenAI separately only if wanted. Public URLs must exactly match the externally observed scheme, host, port, and path used for Twilio signatures. Set `TRUST_PROXY=true` only behind a trusted proxy that overwrites forwarding headers.
+Generate a complete environment interactively with `npm run setup`, then run `npm run doctor`. Production rejects missing core security secrets or insecure public origins. Keep `.env` out of the image and repository.
 
-## 3. Railway
+## Docker Compose
 
-1. Create a Railway service from this repository; `railway.json` selects the Dockerfile.
-2. Attach a persistent volume mounted at `/data`; set `DATABASE_PATH=/data/liaison.db`.
-3. Add the environment values above in Railway Variables. Set `PUBLIC_BASE_URL` and `PUBLIC_WSS_URL` to the assigned/custom domain.
-4. Deploy. Confirm `/health` and `/ready`, log in, run every relevant simulator scenario, and review the production configuration badges.
-5. Enable WebSocket support through any upstream proxy. Railway supports upgrades on public services.
-6. Only after the tests pass, set `ALLOW_REAL_CALLS=true`, redeploy, and place one owned/consenting-number test from the plan review screen.
+```bash
+docker compose build
+docker compose up -d
+docker compose ps
+```
 
-## 4. Cloudflare Tunnel for local development
+The named `liaison-data` volume is mounted at `/data`. Back it up consistently and test restoration. Compose runs only Liaison; add a reverse proxy separately. The optional `examples/Caddyfile` shows a minimal Caddy reverse proxy when both services share a network.
 
-Use a named tunnel with a stable hostname. Cloudflare's current quick tunnels are testing-only and do not support Server-Sent Events, which Liaison uses for browser updates.
+## Railway
 
-1. Install `cloudflared`, run `cloudflared tunnel login`, then create a tunnel: `cloudflared tunnel create liaison-dev`.
-2. Route a hostname you control: `cloudflared tunnel route dns liaison-dev liaison-dev.example.com`.
-3. Create the `cloudflared` configuration described in the official [Tunnel setup guide](https://developers.cloudflare.com/tunnel/setup/) with that hostname routed to `http://localhost:3000` and a final `http_status:404` ingress rule.
-4. Set `PUBLIC_BASE_URL=https://liaison-dev.example.com` and `PUBLIC_WSS_URL=wss://liaison-dev.example.com`. Configure non-empty `APP_ACCESS_KEY`, `SESSION_SECRET`, and `CALL_TOKEN_SECRET`; never expose the development bypass publicly.
-5. Start Liaison, then `cloudflared tunnel run liaison-dev`. Confirm `/health`, `/ready`, authenticated SSE updates, and the ConversationRelay WebSocket upgrade before a test call.
+1. Create a service from the repository. `railway.json` selects the Dockerfile and `/health` check.
+2. Attach a persistent volume at `/data` and set `DATABASE_PATH=/data/liaison.db`.
+3. Add all production variables in Railway Variables, using the assigned/custom HTTPS origin for `PUBLIC_BASE_URL` and its WSS equivalent for `PUBLIC_WSS_URL`.
+4. Deploy with mock/web/simulator modes and both allow flags false.
+5. Confirm `/health`, `/ready`, login, `npm run doctor` in the deployment environment where practical, the messaging demo, and the browser simulator workflow.
+6. Confirm the public service supports WebSocket upgrades and unbuffered SSE.
+7. Configure and enable one live provider at a time only after its checklist passes.
 
-Twilio signatures depend on the exact public URL, so restart Liaison after changing either public URL. Do not use `cloudflared tunnel --url ...` for full Liaison testing while Cloudflare documents the quick-tunnel SSE limitation.
+The Docker entrypoint prepares volume permissions and then drops to the unprivileged `liaison` user. Do not override the container user unless the mounted volume is already writable and the security effect is understood.
 
-## 5. First real-call checklist
+## Reverse proxy
 
-- Number came from an official source; destination is owned/consenting for testing.
-- The case is low-risk and for an authorized account.
-- Real-call privacy notice has been reviewed.
-- Plan version is approved; cost and duration caps are correct.
-- Twilio Debugger is open, service logs are available, and no recording setting is enabled.
-- Place one call. Confirm the setup event, textual IVR selection, human disclosure, consent, transcript, pause, approval, exact text, hang-up, and report export.
+TLS must use a publicly trusted certificate for provider callbacks. Preserve the external host and scheme, WebSocket upgrade headers, request bodies, and unknown Twilio form fields. Avoid SSE response buffering. Set `TRUST_PROXY=true` only behind a trusted proxy that overwrites forwarding headers.
 
-ConversationRelay's current protocol accepts `text`, `sendDigits`, and `end` frames. Incoming setup, finalized prompt, DTMF, interrupt, error, and close are implemented. This repository selects documented defaults for en-US voice/transcription rather than pinning a provider/voice tuple likely to drift.
+Twilio signs the exact URL it requested. A mismatch between proxy-visible and configured scheme/host/port/path causes correct signature rejection. Do not work around it by disabling validation.
+
+## Cloudflare Tunnel for development
+
+Use a named tunnel with a stable hostname and follow Cloudflare's current [Tunnel setup guide](https://developers.cloudflare.com/tunnel/setup/). Configure the hostname to `http://localhost:3000`, then use matching HTTPS/WSS public origins. Confirm that the chosen tunnel mode supports both WebSockets and Server-Sent Events; product limitations can change.
+
+Never expose the local development login bypass. Set all security secrets and an access key before starting a public tunnel. A tunnel does not make the deployment production-ready or persist SQLite.
+
+## Optional providers
+
+- OpenAI: set `LLM_MODE=openai` and `OPENAI_API_KEY`; test quota separately because doctor makes no paid request.
+- Twilio SMS: set `MESSAGING_MODE=twilio_sms`, owner and sender variables, then follow the exact inbound/status paths in [TWILIO_SETUP.md](TWILIO_SETUP.md).
+- Twilio voice: set `TELEPHONY_MODE=twilio`, voice credentials/sender, complete ConversationRelay onboarding, and preserve signed HTTP/WSS routes.
+
+Credentials and selected mode are not enough. `ALLOW_REAL_MESSAGING=true` and `ALLOW_REAL_CALLS=true` are separate final switches.
 
 ## Operations
 
-Use Twilio Debugger plus structured request/call IDs to inspect failures. Rotate `APP_ACCESS_KEY`, session/call secrets, and Twilio credentials in the provider and deployment secret store; active sessions and signed links should be treated as invalid after rotation. Stop all new real calls immediately by setting `ALLOW_REAL_CALLS=false` or `TELEPHONY_MODE=simulator` and redeploying. To stop an active call, use Hang up before disabling the service.
+- Use `/health` for liveness and `/ready` for readiness.
+- Use structured request, message, case, and call IDs in logs; never log bodies or credentials.
+- Inspect Twilio Debugger for provider failures and delivery/call state, without treating provider acceptance as completion.
+- Run `npm run retention:production` from an operator-managed scheduler.
+- Back up SQLite with a stopped-volume snapshot or online backup tooling; raw copies must include a consistent WAL state.
+- Rotate secrets after exposure and understand which sessions, call URLs, and action links become invalid.
+- Disable real messaging/calling and redeploy before investigating an authorization, routing, signature, or cost anomaly.
 
-Run `npm run retention:production` periodically in the deployed image (`npm run retention` is the source-mode equivalent). Back up SQLite with a volume snapshot while the service is stopped, or use SQLite's online backup command against `/data/liaison.db`; copy the WAL/SHM consistently if using raw filesystem copies. Test restore procedures. No automatic external backup is configured.
+No automatic external backup, monitoring service, deployment rollback, or provider failover is configured by this repository.

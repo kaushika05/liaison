@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a scoped change that fits Liaison's self-hosted safety model.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: User need
+      description: Describe the accessibility or support-workflow problem, not only a preferred implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety, privacy, and authority impact
+      description: Address channels, stored data, external side effects, authorization, provider cost, and failure behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This does not require SaaS tenancy, campaign messaging, contact discovery, high-risk support, purchases, new contracts, credentials, recording, or automatic redial.
+          required: true
+        - label: I understand that listing an adapter or feature request does not mean it is implemented or planned.
+          required: true

@@ -1,0 +1,563 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "protocolVersion": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "planId": {
+      "$ref": "#/$defs/__schema2"
+    },
+    "caseId": {
+      "$ref": "#/$defs/__schema3"
+    },
+    "version": {
+      "$ref": "#/$defs/__schema4"
+    },
+    "intent": {
+      "$ref": "#/$defs/__schema5"
+    },
+    "callBrief": {
+      "$ref": "#/$defs/__schema21"
+    },
+    "authority": {
+      "$ref": "#/$defs/__schema25"
+    },
+    "autonomyMode": {
+      "$ref": "#/$defs/__schema20"
+    },
+    "conditionalAuthorityRules": {
+      "$ref": "#/$defs/__schema29"
+    },
+    "createdAt": {
+      "$ref": "#/$defs/__schema35"
+    },
+    "approvedAt": {
+      "$ref": "#/$defs/__schema36"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "planId",
+    "caseId",
+    "version",
+    "intent",
+    "callBrief",
+    "authority",
+    "autonomyMode",
+    "conditionalAuthorityRules",
+    "createdAt"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "default": 1,
+      "$ref": "#/$defs/__schema1"
+    },
+    "__schema1": {
+      "type": "number",
+      "const": 1,
+      "description": "Liaison Universal Support Protocol major version."
+    },
+    "__schema2": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema3": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema4": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "__schema5": {
+      "type": "object",
+      "properties": {
+        "protocolVersion": {
+          "default": 1,
+          "$ref": "#/$defs/__schema1"
+        },
+        "caseId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "userFirstName": {
+          "$ref": "#/$defs/__schema6"
+        },
+        "companyName": {
+          "$ref": "#/$defs/__schema7"
+        },
+        "phoneNumberE164": {
+          "$ref": "#/$defs/__schema8"
+        },
+        "issueSummary": {
+          "$ref": "#/$defs/__schema9"
+        },
+        "chronology": {
+          "maxItems": 30,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema10"
+          }
+        },
+        "desiredOutcome": {
+          "$ref": "#/$defs/__schema11"
+        },
+        "acceptableAlternatives": {
+          "$ref": "#/$defs/__schema12"
+        },
+        "unacceptableOutcomes": {
+          "$ref": "#/$defs/__schema14"
+        },
+        "knownFacts": {
+          "$ref": "#/$defs/__schema16"
+        },
+        "unresolvedQuestions": {
+          "$ref": "#/$defs/__schema18"
+        },
+        "autonomyMode": {
+          "default": "COPILOT",
+          "$ref": "#/$defs/__schema20"
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "caseId",
+        "userFirstName",
+        "companyName",
+        "phoneNumberE164",
+        "issueSummary",
+        "chronology",
+        "desiredOutcome",
+        "acceptableAlternatives",
+        "unacceptableOutcomes",
+        "knownFacts",
+        "unresolvedQuestions",
+        "autonomyMode"
+      ],
+      "additionalProperties": false
+    },
+    "__schema6": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "__schema7": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema8": {
+      "type": "string",
+      "pattern": "^\\+1\\d{10}$"
+    },
+    "__schema9": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "__schema10": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "event": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "id",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "__schema11": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "__schema12": {
+      "maxItems": 15,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema13"
+      }
+    },
+    "__schema13": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "__schema14": {
+      "maxItems": 15,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema15"
+      }
+    },
+    "__schema15": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "__schema16": {
+      "maxItems": 40,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema17"
+      }
+    },
+    "__schema17": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "__schema18": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema19"
+      }
+    },
+    "__schema19": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "__schema20": {
+      "type": "string",
+      "enum": [
+        "ASSIST",
+        "COPILOT",
+        "DELEGATE"
+      ]
+    },
+    "__schema21": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "default": 1,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "companyName": {
+          "$ref": "#/$defs/__schema7"
+        },
+        "phoneNumberE164": {
+          "$ref": "#/$defs/__schema8"
+        },
+        "userFirstName": {
+          "$ref": "#/$defs/__schema6"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "issueSummary": {
+          "$ref": "#/$defs/__schema9"
+        },
+        "chronology": {
+          "maxItems": 30,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema10"
+          }
+        },
+        "desiredOutcome": {
+          "$ref": "#/$defs/__schema11"
+        },
+        "acceptableAlternatives": {
+          "$ref": "#/$defs/__schema12"
+        },
+        "unacceptableOutcomes": {
+          "$ref": "#/$defs/__schema14"
+        },
+        "knownFacts": {
+          "$ref": "#/$defs/__schema16"
+        },
+        "unresolvedQuestions": {
+          "$ref": "#/$defs/__schema18"
+        },
+        "openingIssueStatement": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "strategySteps": {
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema22"
+          }
+        },
+        "likelyApprovalPoints": {
+          "maxItems": 6,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema23"
+          }
+        },
+        "warnings": {
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema24"
+          }
+        },
+        "authority": {
+          "$ref": "#/$defs/__schema25"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "companyName",
+        "phoneNumberE164",
+        "userFirstName",
+        "title",
+        "issueSummary",
+        "chronology",
+        "desiredOutcome",
+        "acceptableAlternatives",
+        "unacceptableOutcomes",
+        "knownFacts",
+        "unresolvedQuestions",
+        "openingIssueStatement",
+        "strategySteps",
+        "likelyApprovalPoints",
+        "warnings",
+        "authority"
+      ],
+      "additionalProperties": false
+    },
+    "__schema22": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "__schema23": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "__schema24": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "__schema25": {
+      "type": "object",
+      "properties": {
+        "navigateIvr": {
+          "$ref": "#/$defs/__schema26"
+        },
+        "explainIssue": {
+          "$ref": "#/$defs/__schema26"
+        },
+        "askQuestions": {
+          "$ref": "#/$defs/__schema26"
+        },
+        "requestEscalation": {
+          "$ref": "#/$defs/__schema26"
+        },
+        "requestCaseNumber": {
+          "$ref": "#/$defs/__schema26"
+        },
+        "requestWrittenConfirmation": {
+          "$ref": "#/$defs/__schema26"
+        },
+        "disclosePersonalData": {
+          "$ref": "#/$defs/__schema26"
+        },
+        "acceptFinancialOutcome": {
+          "$ref": "#/$defs/__schema26"
+        },
+        "acceptAlternativeOutcome": {
+          "$ref": "#/$defs/__schema26"
+        },
+        "modifyAccount": {
+          "$ref": "#/$defs/__schema26"
+        },
+        "cancelService": {
+          "$ref": "#/$defs/__schema26"
+        },
+        "scheduleCommitment": {
+          "$ref": "#/$defs/__schema26"
+        },
+        "endWithoutResolution": {
+          "$ref": "#/$defs/__schema26"
+        },
+        "makePurchase": {
+          "$ref": "#/$defs/__schema27"
+        },
+        "discloseCredential": {
+          "$ref": "#/$defs/__schema27"
+        },
+        "discloseOtp": {
+          "$ref": "#/$defs/__schema27"
+        },
+        "discloseFullSsn": {
+          "$ref": "#/$defs/__schema27"
+        },
+        "disclosePaymentCard": {
+          "$ref": "#/$defs/__schema27"
+        },
+        "waiveLegalRight": {
+          "$ref": "#/$defs/__schema27"
+        },
+        "impersonateUser": {
+          "$ref": "#/$defs/__schema27"
+        },
+        "maximumAuthorizedCostCents": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "forbiddenActions": {
+          "maxItems": 30,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema28"
+          }
+        }
+      },
+      "required": [
+        "navigateIvr",
+        "explainIssue",
+        "askQuestions",
+        "requestEscalation",
+        "requestCaseNumber",
+        "requestWrittenConfirmation",
+        "disclosePersonalData",
+        "acceptFinancialOutcome",
+        "acceptAlternativeOutcome",
+        "modifyAccount",
+        "cancelService",
+        "scheduleCommitment",
+        "endWithoutResolution",
+        "makePurchase",
+        "discloseCredential",
+        "discloseOtp",
+        "discloseFullSsn",
+        "disclosePaymentCard",
+        "waiveLegalRight",
+        "impersonateUser",
+        "maximumAuthorizedCostCents",
+        "forbiddenActions"
+      ],
+      "additionalProperties": false
+    },
+    "__schema26": {
+      "type": "string",
+      "enum": [
+        "ALLOW",
+        "ASK",
+        "DENY"
+      ]
+    },
+    "__schema27": {
+      "type": "string",
+      "const": "DENY"
+    },
+    "__schema28": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "__schema29": {
+      "default": [],
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema30"
+      }
+    },
+    "__schema30": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/__schema31"
+        },
+        "subject": {
+          "$ref": "#/$defs/__schema32"
+        },
+        "comparison": {
+          "$ref": "#/$defs/__schema33"
+        },
+        "amountCents": {
+          "$ref": "#/$defs/__schema34"
+        },
+        "decision": {
+          "$ref": "#/$defs/__schema26"
+        }
+      },
+      "required": [
+        "id",
+        "subject",
+        "decision"
+      ],
+      "additionalProperties": false
+    },
+    "__schema31": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema32": {
+      "type": "string",
+      "enum": [
+        "REFUND",
+        "CREDIT",
+        "FEE",
+        "CHARGE",
+        "PLAN_CHANGE",
+        "CANCELLATION",
+        "APPOINTMENT",
+        "OTHER"
+      ]
+    },
+    "__schema33": {
+      "type": "string",
+      "enum": [
+        "AT_LEAST",
+        "AT_MOST",
+        "EXACTLY",
+        "ANY"
+      ]
+    },
+    "__schema34": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000000
+    },
+    "__schema35": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "__schema36": {
+      "$ref": "#/$defs/__schema35"
+    }
+  },
+  "$id": "https://liaison-protocol.invalid/v1/execution-plan.schema.json",
+  "title": "ExecutionPlan"
+}

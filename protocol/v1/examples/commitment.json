@@ -1,0 +1,17 @@
+{
+  "protocolVersion": 1,
+  "id": "commitment-example-001",
+  "party": "COMPANY",
+  "status": "CONFIRMED",
+  "description": "Apply a $35 account credit within two billing cycles.",
+  "amountCents": 3500,
+  "deadline": "Within two billing cycles",
+  "recurring": false,
+  "evidence": [
+    {
+      "turnId": "turn-014",
+      "exactQuote": "I have applied a thirty-five dollar credit, which will appear within two billing cycles."
+    }
+  ],
+  "createdAt": "2026-08-12T20:14:00.000Z"
+}

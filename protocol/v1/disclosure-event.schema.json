@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "protocolVersion": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "id": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "caseId": {
+      "$ref": "#/$defs/__schema2"
+    },
+    "callId": {
+      "$ref": "#/$defs/__schema3"
+    },
+    "disclosureCardId": {
+      "$ref": "#/$defs/__schema4"
+    },
+    "category": {
+      "$ref": "#/$defs/__schema5"
+    },
+    "channel": {
+      "$ref": "#/$defs/__schema6"
+    },
+    "purpose": {
+      "$ref": "#/$defs/__schema7"
+    },
+    "consentRecorded": {
+      "$ref": "#/$defs/__schema8"
+    },
+    "occurredAt": {
+      "$ref": "#/$defs/__schema9"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "id",
+    "caseId",
+    "callId",
+    "disclosureCardId",
+    "category",
+    "channel",
+    "purpose",
+    "consentRecorded",
+    "occurredAt"
+  ],
+  "additionalProperties": false,
+  "description": "Metadata-only disclosure event. The disclosed value is deliberately excluded.",
+  "$defs": {
+    "__schema0": {
+      "default": 1,
+      "type": "number",
+      "const": 1,
+      "description": "Liaison Universal Support Protocol major version."
+    },
+    "__schema1": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema2": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema3": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema4": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "__schema5": {
+      "type": "string",
+      "enum": [
+        "ACCOUNT_NUMBER",
+        "ORDER_NUMBER",
+        "ADDRESS",
+        "DATE_OF_BIRTH",
+        "EMAIL",
+        "PHONE",
+        "ZIP_CODE",
+        "OTHER_ALLOWED"
+      ]
+    },
+    "__schema6": {
+      "type": "string",
+      "enum": [
+        "SPEECH",
+        "DTMF"
+      ]
+    },
+    "__schema7": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180
+    },
+    "__schema8": {
+      "type": "boolean",
+      "const": true
+    },
+    "__schema9": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    }
+  },
+  "$id": "https://liaison-protocol.invalid/v1/disclosure-event.schema.json",
+  "title": "DisclosureEvent"
+}

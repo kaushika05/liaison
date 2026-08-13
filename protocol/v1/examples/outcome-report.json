@@ -1,0 +1,81 @@
+{
+  "status": "RESOLVED",
+  "summary": {
+    "value": "The company applied a $35 account credit and provided a case number.",
+    "evidence": [
+      {
+        "turnId": "turn-014",
+        "exactQuote": "I have applied a thirty-five dollar credit."
+      }
+    ]
+  },
+  "representativeName": null,
+  "department": {
+    "value": "Billing support",
+    "evidence": [
+      {
+        "turnId": "turn-005",
+        "exactQuote": "You have reached billing support."
+      }
+    ]
+  },
+  "caseNumber": {
+    "value": "EX-1042",
+    "evidence": [
+      {
+        "turnId": "turn-015",
+        "exactQuote": "Your case number is EX-1042."
+      }
+    ]
+  },
+  "resolution": {
+    "value": "A $35 account credit was applied.",
+    "evidence": [
+      {
+        "turnId": "turn-014",
+        "exactQuote": "I have applied a thirty-five dollar credit."
+      }
+    ]
+  },
+  "monetaryOutcomes": [
+    {
+      "value": {
+        "kind": "CREDIT",
+        "amountCents": 3500
+      },
+      "evidence": [
+        {
+          "turnId": "turn-014",
+          "exactQuote": "I have applied a thirty-five dollar credit."
+        }
+      ]
+    }
+  ],
+  "companyCommitments": [
+    {
+      "value": "The credit will appear within two billing cycles.",
+      "evidence": [
+        {
+          "turnId": "turn-014",
+          "exactQuote": "It will appear within two billing cycles."
+        }
+      ]
+    }
+  ],
+  "userActions": [],
+  "deadlines": [
+    {
+      "value": "Within two billing cycles",
+      "evidence": [
+        {
+          "turnId": "turn-014",
+          "exactQuote": "It will appear within two billing cycles."
+        }
+      ]
+    }
+  ],
+  "unresolvedItems": [],
+  "endedAt": "2026-08-12T20:16:00.000Z",
+  "durationSeconds": 720,
+  "estimatedTelephonyCostUsd": 0.12
+}

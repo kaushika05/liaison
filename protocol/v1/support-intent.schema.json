@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "protocolVersion": {
+      "default": 1,
+      "type": "number",
+      "const": 1,
+      "description": "Liaison Universal Support Protocol major version."
+    },
+    "caseId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "userFirstName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "companyName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "phoneNumberE164": {
+      "type": "string",
+      "pattern": "^\\+1\\d{10}$"
+    },
+    "issueSummary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "chronology": {
+      "maxItems": 30,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema0"
+      }
+    },
+    "desiredOutcome": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "acceptableAlternatives": {
+      "maxItems": 15,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema1"
+      }
+    },
+    "unacceptableOutcomes": {
+      "maxItems": 15,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema2"
+      }
+    },
+    "knownFacts": {
+      "maxItems": 40,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema3"
+      }
+    },
+    "unresolvedQuestions": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema4"
+      }
+    },
+    "autonomyMode": {
+      "default": "COPILOT",
+      "type": "string",
+      "enum": [
+        "ASSIST",
+        "COPILOT",
+        "DELEGATE"
+      ]
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "caseId",
+    "userFirstName",
+    "companyName",
+    "phoneNumberE164",
+    "issueSummary",
+    "chronology",
+    "desiredOutcome",
+    "acceptableAlternatives",
+    "unacceptableOutcomes",
+    "knownFacts",
+    "unresolvedQuestions",
+    "autonomyMode"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "event": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "id",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "__schema1": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "__schema2": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "__schema3": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "__schema4": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    }
+  },
+  "$id": "https://liaison-protocol.invalid/v1/support-intent.schema.json",
+  "title": "SupportIntent"
+}

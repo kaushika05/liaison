@@ -1,0 +1,29 @@
+{
+  "protocolVersion": 1,
+  "id": "attention-example-001",
+  "caseId": "case-example-001",
+  "callId": "call-example-001",
+  "tier": "LOW_CONSEQUENCE",
+  "status": "PENDING",
+  "title": "Continue waiting?",
+  "representativeRequest": "The representative asked for five more minutes.",
+  "currentGoal": "Remove the duplicate fee and obtain a case number.",
+  "proposedAction": "Remain on hold for five more minutes.",
+  "consequences": "The call stays connected and may continue to incur provider charges.",
+  "choices": [
+    {
+      "id": "wait-five",
+      "shortCode": "A",
+      "label": "Keep waiting",
+      "effect": "Wait for five more minutes."
+    },
+    {
+      "id": "end-call",
+      "shortCode": "B",
+      "label": "End call",
+      "effect": "End the call without a verified resolution."
+    }
+  ],
+  "createdAt": "2026-08-12T20:00:00.000Z",
+  "expiresAt": "2026-08-12T20:05:00.000Z"
+}

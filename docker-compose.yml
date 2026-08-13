@@ -1,0 +1,35 @@
+name: liaison
+
+services:
+  liaison:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: liaison:local
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_PATH: /data/liaison.db
+    ports:
+      - "${LIAISON_PORT:-3000}:3000"
+    volumes:
+      - liaison-data:/data
+    restart: unless-stopped
+    init: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  liaison-data:

@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "navigateIvr": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "explainIssue": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "askQuestions": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "requestEscalation": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "requestCaseNumber": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "requestWrittenConfirmation": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "disclosePersonalData": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "acceptFinancialOutcome": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "acceptAlternativeOutcome": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "modifyAccount": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "cancelService": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "scheduleCommitment": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "endWithoutResolution": {
+      "$ref": "#/$defs/__schema0"
+    },
+    "makePurchase": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "discloseCredential": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "discloseOtp": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "discloseFullSsn": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "disclosePaymentCard": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "waiveLegalRight": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "impersonateUser": {
+      "$ref": "#/$defs/__schema1"
+    },
+    "maximumAuthorizedCostCents": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "forbiddenActions": {
+      "maxItems": 30,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema2"
+      }
+    }
+  },
+  "required": [
+    "navigateIvr",
+    "explainIssue",
+    "askQuestions",
+    "requestEscalation",
+    "requestCaseNumber",
+    "requestWrittenConfirmation",
+    "disclosePersonalData",
+    "acceptFinancialOutcome",
+    "acceptAlternativeOutcome",
+    "modifyAccount",
+    "cancelService",
+    "scheduleCommitment",
+    "endWithoutResolution",
+    "makePurchase",
+    "discloseCredential",
+    "discloseOtp",
+    "discloseFullSsn",
+    "disclosePaymentCard",
+    "waiveLegalRight",
+    "impersonateUser",
+    "maximumAuthorizedCostCents",
+    "forbiddenActions"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "string",
+      "enum": [
+        "ALLOW",
+        "ASK",
+        "DENY"
+      ]
+    },
+    "__schema1": {
+      "type": "string",
+      "const": "DENY"
+    },
+    "__schema2": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  },
+  "$id": "https://liaison-protocol.invalid/v1/authority-envelope.schema.json",
+  "title": "AuthorityEnvelope"
+}

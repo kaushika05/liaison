@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a reproducible Liaison defect without personal or secret data.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report a vulnerability here. Use the private route in SECURITY.md. Use only synthetic case, phone, message, and transcript data.
+  - type: input
+    id: revision
+    attributes:
+      label: Version or commit
+      description: Release tag, image digest, or commit SHA.
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Local Node.js
+        - Docker Compose
+        - Railway
+        - Other self-hosted environment
+    validations:
+      required: true
+  - type: input
+    id: modes
+    attributes:
+      label: Active modes
+      description: For example, mock / web / simulator. Never paste keys or credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Safe reproduction
+      description: Prefer mock, web, and simulator modes. State clearly if provider behavior is involved.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Include npm run doctor and focused test output with all identifiers, bodies, numbers, tokens, and secrets removed.
+      render: text
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed secrets, personal data, real phone numbers, message bodies, and transcripts.
+          required: true
+        - label: I did not test against a non-consenting person, number, or account.
+          required: true
+        - label: This is not a vulnerability report.
+          required: true

@@ -6,6 +6,7 @@ export type EndReason = "RESOLVED"|"PARTIALLY_RESOLVED"|"UNRESOLVED"|"REPRESENTA
 export interface StartCallInput { callId:string; destination:string; signedToken:string }
 export interface StartCallResult { providerCallId:string }
 export interface SpeakOptions { interruptible?:boolean }
+export class AmbiguousProviderCallStartError extends Error{constructor(cause:unknown){super("AMBIGUOUS_PROVIDER_CALL_START",{cause});this.name="AmbiguousProviderCallStartError";}}
 export interface TelephonyAdapter {
   startCall(input:StartCallInput):Promise<StartCallResult>;
   speak(callId:string,text:string,options?:SpeakOptions):Promise<void>;
@@ -32,13 +33,13 @@ export class TwilioConversationRelayAdapter implements TelephonyAdapter {
   constructor(private readonly config:Config){ this.client=twilio(config.TWILIO_ACCOUNT_SID,config.TWILIO_AUTH_TOKEN); }
   async startCall(input:StartCallInput):Promise<StartCallResult>{
     const token=encodeURIComponent(input.signedToken);
-    const call=await this.client.calls.create({
+    let call:{sid:string};try{call=await this.client.calls.create({
       to:input.destination, from:this.config.TWILIO_FROM_NUMBER,
       url:`${this.config.PUBLIC_BASE_URL}/webhooks/twilio/voice/${token}`, method:"POST", record:false,
       statusCallback:`${this.config.PUBLIC_BASE_URL}/webhooks/twilio/status/${token}`, statusCallbackMethod:"POST",
       statusCallbackEvent:["initiated","ringing","answered","completed"],
       timeout:Math.min(60,Math.max(10,Math.floor(this.config.MAX_CALL_DURATION_MINUTES*2))),
-    });
+    });}catch(error){const status=typeof error==="object"&&error!==null&&"status" in error?Number((error as{status?:unknown}).status):0;if(!status||status>=500)throw new AmbiguousProviderCallStartError(error);throw error;}
     this.providerIds.set(input.callId,call.sid); return {providerCallId:call.sid};
   }
   attachSocket(callId:string,socket:WebSocket):void{ this.sockets.set(callId,socket); socket.once("close",()=>{ if(this.sockets.get(callId)===socket) this.sockets.delete(callId); }); }

@@ -1,0 +1,12 @@
+{
+  "protocolVersion": 1,
+  "id": "disclosure-example-001",
+  "caseId": "case-example-001",
+  "callId": "call-example-001",
+  "disclosureCardId": "card-example-001",
+  "category": "ZIP_CODE",
+  "channel": "SPEECH",
+  "purpose": "Verify the account billing address.",
+  "consentRecorded": true,
+  "occurredAt": "2026-08-12T20:09:00.000Z"
+}

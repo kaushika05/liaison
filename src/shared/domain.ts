@@ -102,6 +102,23 @@ export const intakeDisclosureSchema = disclosureCardMetadataSchema.omit({ id: tr
   value: z.string().min(1).max(300),
 });
 
+export const secureDisclosureInputSchema = z.object({
+  category: z.enum(["ACCOUNT_NUMBER", "ORDER_NUMBER", "ADDRESS", "DATE_OF_BIRTH"]),
+  value: z.string().trim().min(1).max(300),
+  allowedChannels: z.array(z.enum(["SPEECH", "DTMF"])).min(1).max(2),
+}).strict().superRefine((input, context) => {
+  if (new Set(input.allowedChannels).size !== input.allowedChannels.length) {
+    context.addIssue({ code: "custom", path: ["allowedChannels"], message: "Choose each delivery channel at most once." });
+  }
+  if (input.category === "ADDRESS" && (input.allowedChannels.length !== 1 || input.allowedChannels[0] !== "SPEECH")) {
+    context.addIssue({ code: "custom", path: ["allowedChannels"], message: "An address can only be delivered by speech." });
+  }
+  if (input.allowedChannels.includes("DTMF") && (!/^[0-9w#*]+$/.test(input.value) || input.value.length > 64)) {
+    context.addIssue({ code: "custom", path: ["value"], message: "DTMF values may contain only digits, w, #, or *, up to 64 characters." });
+  }
+});
+export type SecureDisclosureInput = z.infer<typeof secureDisclosureInputSchema>;
+
 export const caseIntakeSchema = z.object({
   userFirstName: z.string().trim().min(1).max(80),
   companyName: z.string().trim().min(1).max(120),
@@ -187,7 +204,7 @@ export const transcriptTurnSchema = z.object({
 });
 export type TranscriptTurn = z.infer<typeof transcriptTurnSchema>;
 
-export const approvalStatusSchema = z.enum(["PENDING", "APPROVED", "REJECTED", "REPLACED", "EXPIRED"]);
+export const approvalStatusSchema = z.enum(["PENDING", "APPROVED", "REJECTED", "REPLACED", "EXPIRED", "EXECUTION_FAILED"]);
 export const approvalRequestSchema = z.object({
   id: z.string(), callId: z.string(), status: approvalStatusSchema, category: approvalCategorySchema,
   question: z.string(), representativeRequest: z.string(), proposedSpeech: z.string(), consequences: z.string(),
@@ -214,4 +231,14 @@ export interface PublicConfig {
   maxDurationMinutes: number;
   estimatedCostPerMinuteUsd: number;
   developmentBypass: boolean;
+  appName: string;
+  instanceMode: "personal";
+  ownerConfigured: boolean;
+  messagingMode: "web" | "twilio_sms";
+  messagingConfigured: boolean;
+  allowRealMessaging: boolean;
+  messagingDetail: "MINIMAL" | "STANDARD" | "VERBOSE";
+  inboundMessagingWebhookUrl: string;
+  messagingStatusWebhookUrl: string;
+  messagingRegistrationConfirmed: boolean;
 }
