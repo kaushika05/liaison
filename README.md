@@ -12,6 +12,10 @@ You describe the problem. Liaison writes a plan. You approve it. It makes exactl
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](tsconfig.json)
 [![Runs offline](https://img.shields.io/badge/default%20mode-no%20API%20keys-success.svg)](#try-it-in-60-seconds)
 
+<img src="docs/media/liaison-demo.gif" alt="Liaison handling a billing dispute: a plain-language message becomes an inspectable plan, approval mints a one-time call code, the call runs while trivial choices are answered A/B/C, a material decision is blocked by an approved conditional rule, and the outcome cites an exact transcript quote." width="940">
+
+<sub>The full workflow in mock mode — no credentials, no telephone call. Reproduce it with <code>npm run demo:capture</code>.</sub>
+
 </div>
 
 ---

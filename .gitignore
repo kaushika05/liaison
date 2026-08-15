@@ -7,6 +7,8 @@ playwright-report/
 test-results/
 *.log
 .DS_Store
+coverage/
+.demo-frames/
 
 # Personal study material; not part of the published project.
 study-packet/

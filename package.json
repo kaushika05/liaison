@@ -26,6 +26,7 @@
     "doctor": "tsx scripts/doctor.ts",
     "protocol:generate": "tsx scripts/generate-protocol-schemas.ts",
     "demo:messaging": "tsx scripts/demo-messaging.ts",
+    "demo:capture": "tsx scripts/capture-demo.ts",
     "smoke:openai": "tsx scripts/smoke-openai.ts",
     "retention": "tsx src/server/retention.ts",
     "retention:production": "node dist-server/server/retention.js"
