@@ -128,10 +128,11 @@ Commitments have party, status, description, optional amount/deadline/recurrence
 
 Zod schemas in `src/shared/protocol.ts` are canonical. `npm run protocol:generate` emits JSON Schema 2020-12 documents and validates examples under `protocol/v1`.
 
-Two groups live in that file, and the distinction matters:
+`src/server/protocol/projection.ts` is the single boundary where internal records become protocol documents. Every projection function ends in a `schema.parse`, so an invalid document throws instead of being served, and storage stays free to evolve as long as it can still be projected.
 
-- **Enforced at runtime.** `attentionTierSchema` and `assignAttentionTier`, `semanticCallEventSchema` and its dedup keys, `conditionalAuthorityRuleSchema` and `evaluateConditionalAuthority`, `autonomyModeSchema`, `supportThreadStateSchema`, and `messagingIntentClassificationSchema` are parsed and enforced on the live path.
-- **Proposed interop contracts, not yet wired in.** `SupportIntent`, `ExecutionPlan`, and the protocol-level `AttentionRequest`, `Commitment`, and `DisclosureEvent` describe how a second implementation could exchange these objects. The reference implementation currently persists the equivalent runtime records defined in `src/server/database/db.ts` and `src/shared/domain.ts` instead. They are versioned, tested, and schema-generated so the contract is reviewable, but no code path depends on them today.
+- **Served over HTTP.** `ExecutionPlan` from `GET /api/cases/:caseId/execution-plan`, `AttentionRequest` from `GET /api/attention/:id`, and `Commitment[]` from `GET /api/cases/:caseId/commitments`.
+- **Emitted to the audit log.** A metadata-only `DisclosureEvent` is recorded when an approved disclosure executes. The in-memory disclosure ledger is deliberately lost on restart; this document is what survives.
+- **Enforced on the live path.** Attention tiers, semantic call events, conditional authority rules, autonomy modes, support-thread states, the authority envelope, and the outcome report are parsed and applied during a call, not just published.
 
 Generated artifacts support inspectability and third-party tooling; they do not replace runtime validation.
 

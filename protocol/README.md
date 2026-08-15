@@ -6,23 +6,27 @@ This directory currently contains protocol version 1. It is a project protocol, 
 
 ## Implementation status
 
-Be aware of which schemas the reference implementation actually runs on:
+Every version 1 schema is served or enforced by the reference implementation:
 
-| Schema | Status in this implementation |
+| Schema | How the implementation uses it |
 | --- | --- |
-| `authority-envelope` | **Enforced.** Parsed and applied on every call decision. |
-| `outcome-report` | **Enforced.** Validated against transcript evidence before storage. |
-| `support-intent` | Proposed contract. Not used at runtime. |
-| `execution-plan` | Proposed contract. Not used at runtime. |
-| `attention-request` | Proposed contract. The runtime uses the equivalent database record. |
-| `commitment` | Proposed contract. The runtime uses the equivalent database record. |
-| `disclosure-event` | Proposed contract. No code path emits one today. |
+| `authority-envelope` | Parsed and applied on every call decision. |
+| `outcome-report` | Validated against transcript evidence before storage. |
+| `execution-plan` | Served from `GET /api/cases/:caseId/execution-plan`. |
+| `support-intent` | Embedded in every `ExecutionPlan`. |
+| `attention-request` | Served from `GET /api/attention/:id`. |
+| `commitment` | Served from `GET /api/cases/:caseId/commitments`. |
+| `disclosure-event` | Emitted to the audit log when an approved disclosure executes. |
 
-The proposed contracts exist so a second implementation has something concrete to build against, and
-they are versioned, tested, and schema-generated for that reason. They are not a description of what
-the reference implementation persists. Attention tiers, semantic call events, conditional authority
-rules, autonomy modes, and support-thread states — all also defined in `src/shared/protocol.ts` — are
-enforced at runtime.
+Internal storage keeps its own record shapes so it can evolve independently.
+[`src/server/protocol/projection.ts`](../src/server/protocol/projection.ts) is the single boundary
+that maps those records onto protocol documents, and every projection ends in a `schema.parse`, so a
+document that no longer satisfies the contract throws rather than being served.
+
+Attention tiers, semantic call events, conditional authority rules, autonomy modes, and
+support-thread states — also defined in `src/shared/protocol.ts` — are enforced on the live call path.
+
+`tests/integration/protocol-surface.test.ts` asserts the API responses parse against these schemas.
 
 ## Version 1
 

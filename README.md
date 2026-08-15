@@ -146,6 +146,22 @@ Delivery callbacks arrive late, duplicated, and out of order. A reducer advances
 
 More: [Architecture](docs/ARCHITECTURE.md) · [Messaging protocol](docs/MESSAGING_PROTOCOL.md) · [Provider adapters](docs/PROVIDER_ADAPTERS.md) · [Design principles](docs/DESIGN_PRINCIPLES.md)
 
+## Open protocol
+
+Liaison speaks a versioned data contract — the Universal Support Protocol — so the plan, the
+decisions, and the outcomes are inspectable by tooling that isn't this app. Zod schemas are
+canonical; `npm run protocol:generate` emits JSON Schema 2020-12 into [`protocol/v1/`](protocol/v1/),
+and CI fails if the checked-in artifacts drift.
+
+```bash
+GET /api/cases/:caseId/execution-plan   # ExecutionPlan: intent, brief, authority, conditional rules
+GET /api/attention/:id                  # AttentionRequest: one expiring decision and its tier
+GET /api/cases/:caseId/commitments      # Commitment[]: what each party agreed to, with evidence
+```
+
+Every one of these is `schema.parse`d at the boundary, so a malformed document throws instead of
+shipping. See [protocol/README.md](protocol/README.md).
+
 ## Going live
 
 Real SMS and real calls each need **two** switches flipped, plus credentials. That is intentional.
