@@ -57,4 +57,6 @@ for (const [fileName, schema] of exampleFiles) {
   schema.parse(JSON.parse(await readFile(examplePath, "utf8")));
 }
 
-console.log(`Generated ${schemas.length} protocol v1 schemas and validated ${exampleFiles.length} examples in ${protocolDirectory}`);
+console.log(
+  `Generated ${schemas.length} protocol v1 schemas and validated ${exampleFiles.length} examples in ${protocolDirectory}`,
+);

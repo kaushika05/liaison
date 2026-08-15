@@ -47,13 +47,17 @@ export function extractConditionalAuthorityRules(
   const seeds: RuleSeed[] = [];
   const text = texts.filter(Boolean).join("\n");
 
-  for (const sentence of text.split(/(?<=[.!?])\s+|\n+/).map((item) => item.trim()).filter(Boolean)) {
+  for (const sentence of text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((item) => item.trim())
+    .filter(Boolean)) {
     const monetary = subjectFromText(sentence);
     const threshold = /\b(?:at least|minimum(?: of)?)\s*\$([\d,]+(?:\.\d{1,2})?)/i.exec(sentence);
     if (monetary && threshold && /\b(?:accept|acceptable|authorized|allow|okay|ok)\b/i.test(sentence)) {
       const amountCents = cents(threshold[1]);
       addRule(seeds, { subject: monetary, comparison: "AT_LEAST", amountCents, decision: "ALLOW" });
-      if (amountCents > 0) addRule(seeds, { subject: monetary, comparison: "AT_MOST", amountCents: amountCents - 1, decision: "DENY" });
+      if (amountCents > 0)
+        addRule(seeds, { subject: monetary, comparison: "AT_MOST", amountCents: amountCents - 1, decision: "DENY" });
     }
 
     const maximum = /\b(?:at most|no more than|maximum(?: of)?)\s*\$([\d,]+(?:\.\d{1,2})?)/i.exec(sentence);
@@ -64,22 +68,35 @@ export function extractConditionalAuthorityRules(
     }
 
     if (/\b(?:do not|don't|never|must not|unacceptable)\b/i.test(sentence)) {
-      if (/\b(?:change (?:my|the|our) plan|plan change|upgrade|downgrade)\b/i.test(sentence)) addRule(seeds, { subject: "PLAN_CHANGE", comparison: "ANY", decision: "DENY" });
-      if (/\b(?:new |additional )?charge\b/i.test(sentence)) addRule(seeds, { subject: "CHARGE", comparison: "ANY", decision: "DENY" });
-      if (/\b(?:cancel|cancellation)\b/i.test(sentence)) addRule(seeds, { subject: "CANCELLATION", comparison: "ANY", decision: "DENY" });
-      if (/\b(?:appointment|reschedule|schedule change)\b/i.test(sentence)) addRule(seeds, { subject: "APPOINTMENT", comparison: "ANY", decision: "DENY" });
+      if (/\b(?:change (?:my|the|our) plan|plan change|upgrade|downgrade)\b/i.test(sentence))
+        addRule(seeds, { subject: "PLAN_CHANGE", comparison: "ANY", decision: "DENY" });
+      if (/\b(?:new |additional )?charge\b/i.test(sentence))
+        addRule(seeds, { subject: "CHARGE", comparison: "ANY", decision: "DENY" });
+      if (/\b(?:cancel|cancellation)\b/i.test(sentence))
+        addRule(seeds, { subject: "CANCELLATION", comparison: "ANY", decision: "DENY" });
+      if (/\b(?:appointment|reschedule|schedule change)\b/i.test(sentence))
+        addRule(seeds, { subject: "APPOINTMENT", comparison: "ANY", decision: "DENY" });
     }
   }
 
-  return conditionalAuthorityRulesSchema.parse(seeds.map((rule) => ({
-    id: stableRuleId(caseId, planVersion, rule),
-    ...rule,
-  })));
+  return conditionalAuthorityRulesSchema.parse(
+    seeds.map((rule) => ({
+      id: stableRuleId(caseId, planVersion, rule),
+      ...rule,
+    })),
+  );
 }
 
 export function conditionalRuleSummary(rule: ConditionalAuthorityRule): string {
   const subject = rule.subject.replaceAll("_", " ").toLowerCase();
   const amount = rule.amountCents === undefined ? "" : ` $${(rule.amountCents / 100).toFixed(2)}`;
-  const comparison = rule.comparison === "AT_LEAST" ? "at least" : rule.comparison === "AT_MOST" ? "at most" : rule.comparison === "EXACTLY" ? "exactly" : "any";
+  const comparison =
+    rule.comparison === "AT_LEAST"
+      ? "at least"
+      : rule.comparison === "AT_MOST"
+        ? "at most"
+        : rule.comparison === "EXACTLY"
+          ? "exactly"
+          : "any";
   return `${rule.decision}: ${subject} ${comparison}${amount}`.trim();
 }

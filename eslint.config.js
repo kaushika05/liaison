@@ -5,7 +5,18 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", "dist-server", "node_modules", "playwright-report", "test-results", "data", "coverage", "study-packet"] },
+  {
+    ignores: [
+      "dist",
+      "dist-server",
+      "node_modules",
+      "playwright-report",
+      "test-results",
+      "data",
+      "coverage",
+      "study-packet",
+    ],
+  },
   js.configs.recommended,
   // Type-aware linting. This project is heavily asynchronous and deliberately uses fire-and-forget
   // calls in a few places, so `no-floating-promises` proving the rest are awaited is worth the
@@ -17,7 +28,10 @@ export default tseslint.config(
       globals: { ...globals.browser, ...globals.node },
       // Named explicitly rather than via projectService, because this repo uses three custom-named
       // tsconfigs (client, server, tools) that auto-discovery does not pick up.
-      parserOptions: { project: ["./tsconfig.json", "./tsconfig.server.json", "./tsconfig.tools.json"], tsconfigRootDir: import.meta.dirname },
+      parserOptions: {
+        project: ["./tsconfig.json", "./tsconfig.server.json", "./tsconfig.tools.json"],
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
     plugins: { "react-hooks": reactHooks, "react-refresh": reactRefresh },
     rules: {

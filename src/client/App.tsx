@@ -1,73 +1,1549 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject, type TextareaHTMLAttributes } from "react";
-import { Accessibility, Check, ChevronLeft, CircleAlert, Clock3, Download, Ear, FileText, Gauge, KeyRound, LockKeyhole, LogOut, MessageSquareText, Pause, PhoneCall, Play, Plus, ShieldCheck, Square, Type, Volume2 } from "lucide-react";
+import {
+  Accessibility,
+  Check,
+  ChevronLeft,
+  CircleAlert,
+  Clock3,
+  Download,
+  Ear,
+  FileText,
+  Gauge,
+  KeyRound,
+  LockKeyhole,
+  LogOut,
+  MessageSquareText,
+  Pause,
+  PhoneCall,
+  Play,
+  Plus,
+  ShieldCheck,
+  Square,
+  Type,
+  Volume2,
+} from "lucide-react";
 import type { ApprovalRequest, AuthorityEnvelope, CallBrief, OutcomeReport, PublicConfig } from "../shared/domain";
 import { defaultAuthority } from "../shared/authority-defaults";
 import type { CallSnapshot, CaseDetail, CaseSummary, SessionResponse } from "../shared/api";
 import { api, patch, post } from "./api";
 import { MessagingThread } from "./MessagingThread";
 
-type View="loading"|"login"|"messaging"|"home"|"intake"|"plan"|"live";
-interface Scenario {id:string;name:string;description:string;requiresApproval:boolean}
-const blankConfig:PublicConfig={telephonyMode:"simulator",llmMode:"mock",twilioConfigured:false,openaiConfigured:false,allowRealCalls:false,maxDurationMinutes:30,estimatedCostPerMinuteUsd:.084,developmentBypass:false,appName:"Liaison",instanceMode:"personal",ownerConfigured:false,messagingMode:"web",messagingConfigured:false,allowRealMessaging:false,messagingDetail:"STANDARD",estimatedSmsCostPerSegmentUsd:0,inboundMessagingWebhookUrl:"",messagingStatusWebhookUrl:"",messagingRegistrationConfirmed:false};
-const toLines=(text:string)=>text.split("\n").map((value)=>value.trim()).filter(Boolean);
-const fromLines=(items:string[])=>items.join("\n");
-const formatDuration=(seconds:number)=>`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")}`;
-const callIdFromPath=():string|null=>window.location.pathname.match(/^\/calls\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/?$/i)?.[1]??null;
+type View = "loading" | "login" | "messaging" | "home" | "intake" | "plan" | "live";
+interface Scenario {
+  id: string;
+  name: string;
+  description: string;
+  requiresApproval: boolean;
+}
+const blankConfig: PublicConfig = {
+  telephonyMode: "simulator",
+  llmMode: "mock",
+  twilioConfigured: false,
+  openaiConfigured: false,
+  allowRealCalls: false,
+  maxDurationMinutes: 30,
+  estimatedCostPerMinuteUsd: 0.084,
+  developmentBypass: false,
+  appName: "Liaison",
+  instanceMode: "personal",
+  ownerConfigured: false,
+  messagingMode: "web",
+  messagingConfigured: false,
+  allowRealMessaging: false,
+  messagingDetail: "STANDARD",
+  estimatedSmsCostPerSegmentUsd: 0,
+  inboundMessagingWebhookUrl: "",
+  messagingStatusWebhookUrl: "",
+  messagingRegistrationConfirmed: false,
+};
+const toLines = (text: string) =>
+  text
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
+const fromLines = (items: string[]) => items.join("\n");
+const formatDuration = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+const callIdFromPath = (): string | null =>
+  window.location.pathname.match(
+    /^\/calls\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/?$/i,
+  )?.[1] ?? null;
 
-function StatusPill({tone="neutral",children}:{tone?:"neutral"|"good"|"warn"|"danger";children:ReactNode}){return <span className={`status-pill ${tone}`}>{children}</span>}
-function Field({label,hint,error,children}:{label:string;hint?:string;error?:string;children:ReactNode}){return <label className="field"><span>{label}</span>{hint&&<small>{hint}</small>}{children}{error&&<span className="field-error" role="alert">{error}</span>}</label>}
-function TextArea({value,onChange,rows=4,...props}:Omit<TextareaHTMLAttributes<HTMLTextAreaElement>,"onChange">&{value:string;onChange:(value:string)=>void}){return <textarea {...props} rows={rows} value={value} onChange={(event)=>onChange(event.target.value)} />}
-
-export function App(){
-  const[view,setView]=useState<View>("loading");const[config,setConfig]=useState(blankConfig);const[cases,setCases]=useState<CaseSummary[]>([]);const[scenarios,setScenarios]=useState<Scenario[]>([]);const[currentCase,setCurrentCase]=useState<CaseDetail|null>(null);const[call,setCall]=useState<CallSnapshot|null>(null);const[error,setError]=useState("");const[busy,setBusy]=useState("");const[largeText,setLargeText]=useState(false);const[contrast,setContrast]=useState(false);
-  const refreshHome=async()=>{const data=await api<{cases:CaseSummary[];activeCall:string|null}>("/api/cases");setCases(data.cases);if(data.activeCall){setCall(await api<CallSnapshot>(`/api/calls/${data.activeCall}`));setView("live");}else setView("home")};
-  useEffect(()=>{void api<SessionResponse>("/api/session").then(async(session)=>{setConfig(session.config);if(!session.authenticated){setView("login");return}const data=await api<{scenarios:Scenario[]}>("/api/simulator/scenarios");setScenarios(data.scenarios);const routedCallId=callIdFromPath();if(routedCallId){try{setCall(await api<CallSnapshot>(`/api/calls/${routedCallId}`));setView("live")}catch(cause){setError(cause instanceof Error?cause.message:"Could not open the call outcome");window.history.replaceState({},"","/");setView("messaging")}return}setView("messaging")}).catch((cause)=>{setError(cause instanceof Error?cause.message:String(cause));setView("login")})},[]);
-  useEffect(()=>{const onHistory=()=>{if(view==="login"||view==="loading")return;const routedCallId=callIdFromPath();if(routedCallId){void api<CallSnapshot>(`/api/calls/${routedCallId}`).then((next)=>{setCall(next);setCurrentCase(null);setView("live")}).catch((cause)=>setError(cause instanceof Error?cause.message:"Could not open the call outcome"));return}setCall(null);setCurrentCase(null);setView("messaging")};window.addEventListener("popstate",onHistory);return()=>window.removeEventListener("popstate",onHistory)},[view]);
-  const login=async(accessKey:string)=>{setBusy("Signing in");setError("");try{const session=await post<SessionResponse>("/api/auth/login",{accessKey});setConfig(session.config);const data=await api<{scenarios:Scenario[]}>("/api/simulator/scenarios");setScenarios(data.scenarios);const routedCallId=callIdFromPath();if(routedCallId){try{setCall(await api<CallSnapshot>(`/api/calls/${routedCallId}`));setView("live")}catch(cause){setError(cause instanceof Error?cause.message:"Could not open the call outcome");window.history.replaceState({},"","/");setView("messaging")}}else setView("messaging")}catch(cause){setError(cause instanceof Error?cause.message:"Sign-in failed")}finally{setBusy("")}};
-  const logout=async()=>{await post("/api/auth/logout");setCall(null);setCurrentCase(null);setView("login")};
-  const openMessaging=()=>{if(window.location.pathname!=="/")window.history.pushState({},"","/");setCall(null);setCurrentCase(null);setView("messaging")};
-  const openCase=async(id:string)=>{const item=await api<CaseDetail>(`/api/cases/${id}`);if(window.location.pathname!=="/")window.history.pushState({},"","/");setCurrentCase(item);setView(item.brief?"plan":"intake")};const openCall=async(id:string)=>{const next=await api<CallSnapshot>(`/api/calls/${id}`);if(window.location.pathname!==`/calls/${id}`)window.history.pushState({},"",`/calls/${id}`);setCall(next);setCurrentCase(null);setView("live")};
-  return <div className={`${largeText?"large-text":""} ${contrast?"high-contrast":""}`}><a className="skip-link" href="#main">Skip to main content</a>{view!=="login"&&view!=="loading"&&<Header onHome={openMessaging} onCases={()=>void refreshHome()} onLogout={()=>void logout()} largeText={largeText} setLargeText={setLargeText} contrast={contrast} setContrast={setContrast}/>}<main id="main">{error&&<div className="global-error" role="alert"><CircleAlert/><span>{error}</span><button onClick={()=>setError("")} aria-label="Dismiss error">×</button></div>}{view==="loading"&&<div className="centered"><div className="loader"/><p>Preparing Liaison…</p></div>}{view==="login"&&<Login config={config} onSubmit={login} busy={busy}/>} {view==="messaging"&&<MessagingThread onOpenCase={(id)=>void openCase(id)} onOpenCall={(id)=>void openCall(id)} setGlobalError={setError}/>} {view==="home"&&<Home cases={cases} config={config} onNew={()=>setView("intake")} onOpen={(id)=>void openCase(id)}/>} {view==="intake"&&<Intake onCancel={()=>setView("home")} busy={busy} onSubmit={async(data)=>{setBusy("Creating a safe call plan");setError("");try{const item=await post<CaseDetail>("/api/cases",data);const brief=await post<CallBrief>(`/api/cases/${item.id}/plan`);setCurrentCase({...item,brief,status:"PLANNED"});setView("plan")}catch(cause){setError(cause instanceof Error?cause.message:"Could not create case")}finally{setBusy("")}}}/>} {view==="plan"&&currentCase?.brief&&<Plan caseItem={currentCase} config={config} scenarios={scenarios} onBack={openMessaging} onSaved={(brief)=>setCurrentCase({...currentCase,brief})} onCall={(snapshot)=>{window.history.pushState({},"",`/calls/${snapshot.id}`);setCall(snapshot);setView("live")}} setBusy={setBusy} setError={setError}/>} {view==="live"&&call&&<Live initial={call} onUpdate={setCall} onHome={openMessaging} setError={setError}/>}</main><footer className="source-footer">Self-hosted free software under AGPL-3.0 · <a href="https://github.com/kaushika05/liaison" target="_blank" rel="noreferrer">View complete source and license</a> · No warranty</footer></div>;
+function StatusPill({
+  tone = "neutral",
+  children,
+}: {
+  tone?: "neutral" | "good" | "warn" | "danger";
+  children: ReactNode;
+}) {
+  return <span className={`status-pill ${tone}`}>{children}</span>;
+}
+function Field({
+  label,
+  hint,
+  error,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  error?: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      {hint && <small>{hint}</small>}
+      {children}
+      {error && (
+        <span className="field-error" role="alert">
+          {error}
+        </span>
+      )}
+    </label>
+  );
+}
+function TextArea({
+  value,
+  onChange,
+  rows = 4,
+  ...props
+}: Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange"> & {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return <textarea {...props} rows={rows} value={value} onChange={(event) => onChange(event.target.value)} />;
 }
 
-function Header({onHome,onCases,onLogout,largeText,setLargeText,contrast,setContrast}:{onHome:()=>void;onCases:()=>void;onLogout:()=>void;largeText:boolean;setLargeText:(value:boolean)=>void;contrast:boolean;setContrast:(value:boolean)=>void}){return <header className="site-header"><button className="brand" onClick={onHome} aria-label="Liaison messaging home"><span className="brand-mark"><Ear/></span><span><strong>Liaison</strong><small>Self-hosted support agent</small></span></button><nav aria-label="Display and account controls"><button className="quiet" onClick={onCases}><FileText/>Advanced cases</button><button className="quiet" onClick={()=>setLargeText(!largeText)} aria-pressed={largeText}><Type/>Large text</button><button className="quiet" onClick={()=>setContrast(!contrast)} aria-pressed={contrast}><Accessibility/>Contrast</button><button className="quiet" onClick={onLogout}><LogOut/>Log out</button></nav></header>}
-function Login({config,onSubmit,busy}:{config:PublicConfig;onSubmit:(key:string)=>Promise<void>;busy:string}){const[key,setKey]=useState("");return <section className="login-shell"><div className="login-card"><div className="brand-mark large"><Ear/></div><p className="eyebrow">A self-hosted text interface for customer support</p><h1>Handle the phone through one calm text thread.</h1><p className="lede">Describe the issue naturally, inspect the plan and authority, authorize one call, and intervene only when something important changes.</p><form onSubmit={(event)=>{event.preventDefault();void onSubmit(key)}}><Field label={config.developmentBypass?"Local development access":"Deployment access key"} hint={config.developmentBypass?"No key is configured. This bypass is available only in local development.":"Your key is never saved in browser storage."}><div className="input-with-icon"><KeyRound/><input type="password" autoComplete="current-password" value={key} onChange={(event)=>setKey(event.target.value)} /></div></Field><button className="primary wide" disabled={Boolean(busy)}>{busy||(config.developmentBypass?"Continue locally":"Enter Liaison")}</button></form><div className="trust-line"><ShieldCheck/><span>Your deployment · your provider accounts · no project telemetry</span></div></div><aside className="login-aside" aria-label="How Liaison works"><div><span>01</span><h2>Text the issue</h2><p>Liaison asks only for missing facts, then presents an inspectable plan.</p></div><div><span>02</span><h2>Authorize once</h2><p>An exact short-lived code starts only the approved plan.</p></div><div><span>03</span><h2>Stay in control</h2><p>Receive semantic progress, secure decisions, and transcript-grounded outcomes.</p></div></aside></section>}
-
-function Home({cases,config,onNew,onOpen}:{cases:CaseSummary[];config:PublicConfig;onNew:()=>void;onOpen:(id:string)=>void}){return <div className="page home-page"><section className="hero"><div><p className="eyebrow">Your support-call workspace</p><h1>A calm, readable way to handle the phone.</h1><p>Liaison speaks with customer support while you supervise every important decision through text.</p><button className="primary" onClick={onNew}><Plus/>Create a support case</button></div><div className="mode-card"><div className="mode-icon"><PhoneCall/></div><p>Current calling mode</p><h2>{config.telephonyMode==="simulator"?"Safe simulation":"Twilio live"}</h2><span>{config.telephonyMode==="simulator"?"No telephone or model credentials needed":"Real calls still require explicit confirmation"}</span><div className="mode-row"><StatusPill>Planning: {config.llmMode}</StatusPill><StatusPill tone={config.allowRealCalls?"warn":"neutral"}>Real calls {config.allowRealCalls?"enabled":"off"}</StatusPill></div></div></section><section className="privacy-strip"><LockKeyhole/><div><strong>Important privacy boundary</strong><p>Text transcripts are stored locally. Temporary disclosure values stay only in server memory and are cleared when the call ends.</p></div></section><section className="section-head"><div><p className="eyebrow">Case history</p><h2>Recent support cases</h2></div></section>{cases.length===0?<div className="empty-state"><FileText/><h3>No cases yet</h3><p>Create a case to prepare a plan or try a complete simulation.</p><button onClick={onNew}>Create your first case</button></div>:<div className="case-grid">{cases.map((item)=><button className="case-card" key={item.id} onClick={()=>onOpen(item.id)}><span className="case-company">{item.companyName}</span><h3>{item.title}</h3><span className="case-meta"><StatusPill tone={item.status==="COMPLETED"?"good":"neutral"}>{item.status.replaceAll("_"," ")}</StatusPill><time>{new Date(item.updatedAt).toLocaleDateString()}</time></span></button>)}</div>}</div>}
-
-interface IntakeData{userFirstName:string;companyName:string;phoneNumber:string;issueDescription:string;chronologyText:string;desiredOutcome:string;acceptableAlternativesText:string;unacceptableOutcomesText:string;knownFactsText:string;disclosures:Array<{label:string;category:string;permission:"ASK";allowedChannels:Array<"SPEECH"|"DTMF">;allowedPurposes:string[];value:string}>;authority:AuthorityEnvelope;officialNumberConfirmed:boolean;authorizedAccountConfirmed:boolean;lowRiskConfirmed:boolean}
-const initialIntake:IntakeData={userFirstName:"",companyName:"",phoneNumber:"",issueDescription:"",chronologyText:"",desiredOutcome:"",acceptableAlternativesText:"",unacceptableOutcomesText:"",knownFactsText:"",disclosures:[],authority:defaultAuthority,officialNumberConfirmed:false,authorizedAccountConfirmed:false,lowRiskConfirmed:false};
-function Intake({onCancel,onSubmit,busy}:{onCancel:()=>void;onSubmit:(data:IntakeData)=>Promise<void>;busy:string}){
-  const[data,setData]=useState(initialIntake);const[showDisclosure,setShowDisclosure]=useState(false);const set=<K extends keyof IntakeData>(key:K,value:IntakeData[K])=>setData((old)=>({...old,[key]:value}));const disclosure=data.disclosures[0];
-  return <div className="page narrow"><button className="back" onClick={onCancel}><ChevronLeft/>Cases</button><div className="title-block"><p className="eyebrow">New support case</p><h1>Tell Liaison what needs to happen.</h1><p>Use your own words. The next screen turns this into an editable plan; nothing here starts a call.</p></div><form className="intake-form" onSubmit={(event)=>{event.preventDefault();void onSubmit(data)}}>
-    <section className="form-card"><FormHeading number="1" title="Who and where" copy="Enter the support number yourself from an official source."/><div className="two-col"><Field label="Your first name"><input required value={data.userFirstName} onChange={(event)=>set("userFirstName",event.target.value)} autoComplete="given-name"/></Field><Field label="Company name"><input required value={data.companyName} onChange={(event)=>set("companyName",event.target.value)}/></Field></div><Field label="Official US support number" hint="Liaison validates the format but cannot verify that the number belongs to the company."><input required inputMode="tel" placeholder="(800) 555-0123" value={data.phoneNumber} onChange={(event)=>set("phoneNumber",event.target.value)}/></Field></section>
-    <section className="form-card"><FormHeading number="2" title="The issue and outcome" copy="Be precise about what happened and what you want."/><Field label="Describe the issue"><TextArea required minLength={20} rows={6} value={data.issueDescription} onChange={(value)=>set("issueDescription",value)}/></Field><Field label="Relevant chronology" hint="One event per line. Leave uncertain dates uncertain."><TextArea value={data.chronologyText} onChange={(value)=>set("chronologyText",value)} placeholder={'Item arrived damaged on May 3\nContacted chat support; no resolution'}/></Field><Field label="Desired resolution"><TextArea required rows={3} value={data.desiredOutcome} onChange={(value)=>set("desiredOutcome",value)}/></Field><div className="two-col"><Field label="Acceptable alternatives" hint="One per line"><TextArea rows={3} value={data.acceptableAlternativesText} onChange={(value)=>set("acceptableAlternativesText",value)}/></Field><Field label="Unacceptable outcomes" hint="One per line"><TextArea rows={3} value={data.unacceptableOutcomesText} onChange={(value)=>set("unacceptableOutcomesText",value)}/></Field></div><Field label="Facts the assistant may use" hint="One fact per line. Do not enter passwords or one-time codes."><TextArea rows={4} value={data.knownFactsText} onChange={(value)=>set("knownFactsText",value)}/></Field></section>
-    <section className="form-card"><FormHeading number="3" title="Temporary sensitive information" copy="Optional values are held only in server memory and always require approval."/>{!showDisclosure?<button type="button" className="secondary" onClick={()=>{setShowDisclosure(true);set("disclosures",[{label:"Account number",category:"ACCOUNT_NUMBER",permission:"ASK",allowedChannels:["DTMF"],allowedPurposes:["Account authentication"],value:""}])}}><Plus/>Add a disclosure card</button>:<div className="disclosure-editor"><div className="two-col"><Field label="Label"><input value={disclosure?.label??""} onChange={(event)=>set("disclosures",[{...disclosure,label:event.target.value}])}/></Field><Field label="Category"><select value={disclosure?.category} onChange={(event)=>set("disclosures",[{...disclosure,category:event.target.value}])}><option value="ACCOUNT_NUMBER">Account number</option><option value="ORDER_NUMBER">Order number</option><option value="ADDRESS">Address</option><option value="DATE_OF_BIRTH">Date of birth</option><option value="EMAIL">Email</option><option value="PHONE">Phone</option><option value="ZIP_CODE">ZIP code</option><option value="OTHER_ALLOWED">Other allowed</option></select></Field></div><Field label="Temporary value" hint="Never enter a password, code, full Social Security number, card number, CVV, or PIN."><input required value={disclosure?.value??""} onChange={(event)=>set("disclosures",[{...disclosure,value:event.target.value}])}/></Field><button type="button" className="text-button danger-text" onClick={()=>{setShowDisclosure(false);set("disclosures",[])}}>Remove card</button></div>}</section>
-    <section className="form-card"><FormHeading number="4" title="Safety confirmations" copy="Real calls are limited to low-risk support for accounts you may manage."/><div className="checks"><label><input type="checkbox" checked={data.officialNumberConfirmed} onChange={(event)=>set("officialNumberConfirmed",event.target.checked)}/><span>I obtained this number from an official company source.</span></label><label><input type="checkbox" checked={data.authorizedAccountConfirmed} onChange={(event)=>set("authorizedAccountConfirmed",event.target.checked)}/><span>I am calling about my own account or one I am authorized to manage.</span></label><label><input type="checkbox" checked={data.lowRiskConfirmed} onChange={(event)=>set("lowRiskConfirmed",event.target.checked)}/><span>This is not emergency, medical, legal, financial, insurance, government, debt, employment, immigration, or law-enforcement business.</span></label></div></section>
-    <div className="form-actions"><button type="button" onClick={onCancel}>Cancel</button><button className="primary" disabled={Boolean(busy)||!data.officialNumberConfirmed||!data.authorizedAccountConfirmed||!data.lowRiskConfirmed}>{busy||"Create editable plan"}</button></div></form></div>;
+export function App() {
+  const [view, setView] = useState<View>("loading");
+  const [config, setConfig] = useState(blankConfig);
+  const [cases, setCases] = useState<CaseSummary[]>([]);
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const [currentCase, setCurrentCase] = useState<CaseDetail | null>(null);
+  const [call, setCall] = useState<CallSnapshot | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState("");
+  const [largeText, setLargeText] = useState(false);
+  const [contrast, setContrast] = useState(false);
+  const refreshHome = async () => {
+    const data = await api<{ cases: CaseSummary[]; activeCall: string | null }>("/api/cases");
+    setCases(data.cases);
+    if (data.activeCall) {
+      setCall(await api<CallSnapshot>(`/api/calls/${data.activeCall}`));
+      setView("live");
+    } else setView("home");
+  };
+  useEffect(() => {
+    void api<SessionResponse>("/api/session")
+      .then(async (session) => {
+        setConfig(session.config);
+        if (!session.authenticated) {
+          setView("login");
+          return;
+        }
+        const data = await api<{ scenarios: Scenario[] }>("/api/simulator/scenarios");
+        setScenarios(data.scenarios);
+        const routedCallId = callIdFromPath();
+        if (routedCallId) {
+          try {
+            setCall(await api<CallSnapshot>(`/api/calls/${routedCallId}`));
+            setView("live");
+          } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Could not open the call outcome");
+            window.history.replaceState({}, "", "/");
+            setView("messaging");
+          }
+          return;
+        }
+        setView("messaging");
+      })
+      .catch((cause) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        setView("login");
+      });
+  }, []);
+  useEffect(() => {
+    const onHistory = () => {
+      if (view === "login" || view === "loading") return;
+      const routedCallId = callIdFromPath();
+      if (routedCallId) {
+        void api<CallSnapshot>(`/api/calls/${routedCallId}`)
+          .then((next) => {
+            setCall(next);
+            setCurrentCase(null);
+            setView("live");
+          })
+          .catch((cause) => setError(cause instanceof Error ? cause.message : "Could not open the call outcome"));
+        return;
+      }
+      setCall(null);
+      setCurrentCase(null);
+      setView("messaging");
+    };
+    window.addEventListener("popstate", onHistory);
+    return () => window.removeEventListener("popstate", onHistory);
+  }, [view]);
+  const login = async (accessKey: string) => {
+    setBusy("Signing in");
+    setError("");
+    try {
+      const session = await post<SessionResponse>("/api/auth/login", { accessKey });
+      setConfig(session.config);
+      const data = await api<{ scenarios: Scenario[] }>("/api/simulator/scenarios");
+      setScenarios(data.scenarios);
+      const routedCallId = callIdFromPath();
+      if (routedCallId) {
+        try {
+          setCall(await api<CallSnapshot>(`/api/calls/${routedCallId}`));
+          setView("live");
+        } catch (cause) {
+          setError(cause instanceof Error ? cause.message : "Could not open the call outcome");
+          window.history.replaceState({}, "", "/");
+          setView("messaging");
+        }
+      } else setView("messaging");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Sign-in failed");
+    } finally {
+      setBusy("");
+    }
+  };
+  const logout = async () => {
+    await post("/api/auth/logout");
+    setCall(null);
+    setCurrentCase(null);
+    setView("login");
+  };
+  const openMessaging = () => {
+    if (window.location.pathname !== "/") window.history.pushState({}, "", "/");
+    setCall(null);
+    setCurrentCase(null);
+    setView("messaging");
+  };
+  const openCase = async (id: string) => {
+    const item = await api<CaseDetail>(`/api/cases/${id}`);
+    if (window.location.pathname !== "/") window.history.pushState({}, "", "/");
+    setCurrentCase(item);
+    setView(item.brief ? "plan" : "intake");
+  };
+  const openCall = async (id: string) => {
+    const next = await api<CallSnapshot>(`/api/calls/${id}`);
+    if (window.location.pathname !== `/calls/${id}`) window.history.pushState({}, "", `/calls/${id}`);
+    setCall(next);
+    setCurrentCase(null);
+    setView("live");
+  };
+  return (
+    <div className={`${largeText ? "large-text" : ""} ${contrast ? "high-contrast" : ""}`}>
+      <a className="skip-link" href="#main">
+        Skip to main content
+      </a>
+      {view !== "login" && view !== "loading" && (
+        <Header
+          onHome={openMessaging}
+          onCases={() => void refreshHome()}
+          onLogout={() => void logout()}
+          largeText={largeText}
+          setLargeText={setLargeText}
+          contrast={contrast}
+          setContrast={setContrast}
+        />
+      )}
+      <main id="main">
+        {error && (
+          <div className="global-error" role="alert">
+            <CircleAlert />
+            <span>{error}</span>
+            <button onClick={() => setError("")} aria-label="Dismiss error">
+              ×
+            </button>
+          </div>
+        )}
+        {view === "loading" && (
+          <div className="centered">
+            <div className="loader" />
+            <p>Preparing Liaison…</p>
+          </div>
+        )}
+        {view === "login" && <Login config={config} onSubmit={login} busy={busy} />}{" "}
+        {view === "messaging" && (
+          <MessagingThread
+            onOpenCase={(id) => void openCase(id)}
+            onOpenCall={(id) => void openCall(id)}
+            setGlobalError={setError}
+          />
+        )}{" "}
+        {view === "home" && (
+          <Home cases={cases} config={config} onNew={() => setView("intake")} onOpen={(id) => void openCase(id)} />
+        )}{" "}
+        {view === "intake" && (
+          <Intake
+            onCancel={() => setView("home")}
+            busy={busy}
+            onSubmit={async (data) => {
+              setBusy("Creating a safe call plan");
+              setError("");
+              try {
+                const item = await post<CaseDetail>("/api/cases", data);
+                const brief = await post<CallBrief>(`/api/cases/${item.id}/plan`);
+                setCurrentCase({ ...item, brief, status: "PLANNED" });
+                setView("plan");
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : "Could not create case");
+              } finally {
+                setBusy("");
+              }
+            }}
+          />
+        )}{" "}
+        {view === "plan" && currentCase?.brief && (
+          <Plan
+            caseItem={currentCase}
+            config={config}
+            scenarios={scenarios}
+            onBack={openMessaging}
+            onSaved={(brief) => setCurrentCase({ ...currentCase, brief })}
+            onCall={(snapshot) => {
+              window.history.pushState({}, "", `/calls/${snapshot.id}`);
+              setCall(snapshot);
+              setView("live");
+            }}
+            setBusy={setBusy}
+            setError={setError}
+          />
+        )}{" "}
+        {view === "live" && call && (
+          <Live initial={call} onUpdate={setCall} onHome={openMessaging} setError={setError} />
+        )}
+      </main>
+      <footer className="source-footer">
+        Self-hosted free software under AGPL-3.0 ·{" "}
+        <a href="https://github.com/kaushika05/liaison" target="_blank" rel="noreferrer">
+          View complete source and license
+        </a>{" "}
+        · No warranty
+      </footer>
+    </div>
+  );
 }
-function FormHeading({number,title,copy}:{number:string;title:string;copy:string}){return <div className="form-card-head"><span>{number}</span><div><h2>{title}</h2><p>{copy}</p></div></div>}
 
-function Plan({caseItem,config,scenarios,onBack,onSaved,onCall,setBusy,setError}:{caseItem:CaseDetail;config:PublicConfig;scenarios:Scenario[];onBack:()=>void;onSaved:(brief:CallBrief)=>void;onCall:(call:CallSnapshot)=>void;setBusy:(value:string)=>void;setError:(value:string)=>void}){
-  const[brief,setBrief]=useState(caseItem.brief!);const[scenarioId,setScenarioId]=useState(scenarios[0]?.id??"");const[approved,setApproved]=useState(caseItem.approvedVersion===brief.version);const update=<K extends keyof CallBrief>(key:K,value:CallBrief[K])=>{setBrief((old)=>({...old,[key]:value}));setApproved(false)};
-  const save=async()=>{setBusy("Saving plan");try{const result=await patch<CallBrief>(`/api/cases/${caseItem.id}/plan`,brief);setBrief(result);onSaved(result);return result}finally{setBusy("")}};
-  const approve=async()=>{await save();await post(`/api/cases/${caseItem.id}/plan/approve`);setApproved(true)};
-  const start=async()=>{setError("");setBusy("Starting developer simulation");try{if(!approved)await approve();const snapshot=await post<CallSnapshot>(`/api/cases/${caseItem.id}/simulate`,{scenarioId,accelerated:false});onCall(snapshot)}catch(cause){setError(cause instanceof Error?cause.message:"Could not start simulation")}finally{setBusy("")}};
-  return <div className="page plan-page"><button className="back" onClick={onBack}><ChevronLeft/>Cases</button><div className="plan-title"><div><p className="eyebrow">Review the call plan</p><h1>{brief.title}</h1><p>Everything below remains under your control. Review it before authorizing a simulation or call.</p></div><StatusPill tone={approved?"good":"warn"}>{approved?"Plan approved":"Approval required"}</StatusPill></div><div className="plan-layout"><div className="plan-main">
-    <section className="form-card"><h2>Issue and target</h2><Field label="Plan title"><input value={brief.title} onChange={(event)=>update("title",event.target.value)}/></Field><Field label="Issue summary"><TextArea rows={5} value={brief.issueSummary} onChange={(value)=>update("issueSummary",value)}/></Field><Field label="Desired outcome"><TextArea rows={3} value={brief.desiredOutcome} onChange={(value)=>update("desiredOutcome",value)}/></Field><div className="two-col"><Field label="Acceptable alternatives" hint="One per line"><TextArea value={fromLines(brief.acceptableAlternatives)} onChange={(value)=>update("acceptableAlternatives",toLines(value))}/></Field><Field label="Unacceptable outcomes" hint="One per line"><TextArea value={fromLines(brief.unacceptableOutcomes)} onChange={(value)=>update("unacceptableOutcomes",toLines(value))}/></Field></div></section>
-    <section className="form-card"><h2>What Liaison will say and do</h2><Field label="Opening issue statement"><TextArea rows={4} value={brief.openingIssueStatement} onChange={(value)=>update("openingIssueStatement",value)}/></Field><Field label="Strategy steps" hint="One per line; up to eight"><TextArea rows={7} value={fromLines(brief.strategySteps)} onChange={(value)=>update("strategySteps",toLines(value).slice(0,8))}/></Field><Field label="Likely approval points"><TextArea rows={4} value={fromLines(brief.likelyApprovalPoints)} onChange={(value)=>update("likelyApprovalPoints",toLines(value).slice(0,6))}/></Field></section>
-    <section className="form-card"><h2>Known and missing information</h2><div className="two-col"><Field label="Known facts"><TextArea rows={5} value={fromLines(brief.knownFacts)} onChange={(value)=>update("knownFacts",toLines(value))}/></Field><Field label="Unresolved questions"><TextArea rows={5} value={fromLines(brief.unresolvedQuestions)} onChange={(value)=>update("unresolvedQuestions",toLines(value))}/></Field></div><Field label="Warnings"><TextArea rows={4} value={fromLines(brief.warnings)} onChange={(value)=>update("warnings",toLines(value))}/></Field></section>
-  </div><aside className="plan-side"><section className="side-card"><p className="eyebrow">Call boundary</p><h2>Automatic vs. ask first</h2><ul className="permission-list"><li><Check/>Explain issue and ask questions <StatusPill tone="good">Allow</StatusPill></li><li><Check/>Navigate IVR and request escalation <StatusPill tone="good">Allow</StatusPill></li><li><CircleAlert/>Personal data and changed outcomes <StatusPill tone="warn">Ask</StatusPill></li><li><Square/>Purchases, credentials, legal waivers <StatusPill tone="danger">Never</StatusPill></li></ul><Field label="Maximum authorized cost (cents)"><input type="number" min="0" value={brief.authority.maximumAuthorizedCostCents} onChange={(event)=>update("authority",{...brief.authority,maximumAuthorizedCostCents:Number(event.target.value)})}/></Field></section><section className="side-card"><p className="eyebrow">Cost guardrail</p><div className="cost-big">${(config.maxDurationMinutes*config.estimatedCostPerMinuteUsd).toFixed(2)}</div><p>Estimated maximum at {config.maxDurationMinutes} minutes. Excludes taxes, number rental, and destination-specific charges.</p></section><section className="side-card start-card"><p className="eyebrow">Developer simulator</p><Field label="Simulation scenario"><select value={scenarioId} onChange={(event)=>setScenarioId(event.target.value)}>{scenarios.map((scenario)=><option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}</select></Field><p className="scenario-copy">{scenarios.find((item)=>item.id===scenarioId)?.description}</p>{config.developmentBypass?<button className="primary wide" onClick={()=>void start()}><Play/>Approve and run developer scenario</button>:<small>Production calls and simulations start only from the messaging thread after plan review and an exact one-time CALL code.</small>}<button className="text-button wide" onClick={()=>void save()}>Save edits only</button></section></aside></div></div>;
+function Header({
+  onHome,
+  onCases,
+  onLogout,
+  largeText,
+  setLargeText,
+  contrast,
+  setContrast,
+}: {
+  onHome: () => void;
+  onCases: () => void;
+  onLogout: () => void;
+  largeText: boolean;
+  setLargeText: (value: boolean) => void;
+  contrast: boolean;
+  setContrast: (value: boolean) => void;
+}) {
+  return (
+    <header className="site-header">
+      <button className="brand" onClick={onHome} aria-label="Liaison messaging home">
+        <span className="brand-mark">
+          <Ear />
+        </span>
+        <span>
+          <strong>Liaison</strong>
+          <small>Self-hosted support agent</small>
+        </span>
+      </button>
+      <nav aria-label="Display and account controls">
+        <button className="quiet" onClick={onCases}>
+          <FileText />
+          Advanced cases
+        </button>
+        <button className="quiet" onClick={() => setLargeText(!largeText)} aria-pressed={largeText}>
+          <Type />
+          Large text
+        </button>
+        <button className="quiet" onClick={() => setContrast(!contrast)} aria-pressed={contrast}>
+          <Accessibility />
+          Contrast
+        </button>
+        <button className="quiet" onClick={onLogout}>
+          <LogOut />
+          Log out
+        </button>
+      </nav>
+    </header>
+  );
+}
+function Login({
+  config,
+  onSubmit,
+  busy,
+}: {
+  config: PublicConfig;
+  onSubmit: (key: string) => Promise<void>;
+  busy: string;
+}) {
+  const [key, setKey] = useState("");
+  return (
+    <section className="login-shell">
+      <div className="login-card">
+        <div className="brand-mark large">
+          <Ear />
+        </div>
+        <p className="eyebrow">A self-hosted text interface for customer support</p>
+        <h1>Handle the phone through one calm text thread.</h1>
+        <p className="lede">
+          Describe the issue naturally, inspect the plan and authority, authorize one call, and intervene only when
+          something important changes.
+        </p>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onSubmit(key);
+          }}
+        >
+          <Field
+            label={config.developmentBypass ? "Local development access" : "Deployment access key"}
+            hint={
+              config.developmentBypass
+                ? "No key is configured. This bypass is available only in local development."
+                : "Your key is never saved in browser storage."
+            }
+          >
+            <div className="input-with-icon">
+              <KeyRound />
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={key}
+                onChange={(event) => setKey(event.target.value)}
+              />
+            </div>
+          </Field>
+          <button className="primary wide" disabled={Boolean(busy)}>
+            {busy || (config.developmentBypass ? "Continue locally" : "Enter Liaison")}
+          </button>
+        </form>
+        <div className="trust-line">
+          <ShieldCheck />
+          <span>Your deployment · your provider accounts · no project telemetry</span>
+        </div>
+      </div>
+      <aside className="login-aside" aria-label="How Liaison works">
+        <div>
+          <span>01</span>
+          <h2>Text the issue</h2>
+          <p>Liaison asks only for missing facts, then presents an inspectable plan.</p>
+        </div>
+        <div>
+          <span>02</span>
+          <h2>Authorize once</h2>
+          <p>An exact short-lived code starts only the approved plan.</p>
+        </div>
+        <div>
+          <span>03</span>
+          <h2>Stay in control</h2>
+          <p>Receive semantic progress, secure decisions, and transcript-grounded outcomes.</p>
+        </div>
+      </aside>
+    </section>
+  );
 }
 
-function Live({initial,onUpdate,onHome,setError}:{initial:CallSnapshot;onUpdate:(call:CallSnapshot)=>void;onHome:()=>void;setError:(value:string)=>void}){
-  const[call,setCall]=useState(initial);const[privateText,setPrivateText]=useState("");const[exactText,setExactText]=useState("");const[approvalEdit,setApprovalEdit]=useState("");const approvalRef=useRef<HTMLDivElement>(null);const terminal=call.state==="COMPLETED"||call.state==="FAILED";
-  useEffect(()=>{let stopped=false;const refresh=async()=>{const next=await api<CallSnapshot>(`/api/calls/${initial.id}`);if(!stopped){setCall(next);onUpdate(next)}};const source=new EventSource(`/api/calls/${initial.id}/events`);const update=()=>void refresh();["snapshot","call.state","call.status","call.activity","transcript.turn","approval.requested","approval.resolved","duration.updated","outcome.ready","error"].forEach((name)=>source.addEventListener(name,update));source.onerror=()=>{if(!terminal)setError("Live updates were interrupted. Liaison is reconnecting automatically.")};return()=>{stopped=true;source.close()}},[initial.id,onUpdate,setError,terminal]);
-  useEffect(()=>{if(call.pendingApproval)approvalRef.current?.focus()},[call.pendingApproval]);
-  const action=async(path:string,body:unknown={})=>{try{const next=await post<CallSnapshot>(`/api/calls/${call.id}/${path}`,body);setCall(next);onUpdate(next)}catch(cause){setError(cause instanceof Error?cause.message:"Action failed")}};
-  return <div className="call-page"><section className="call-top"><div><div className="call-badges"><StatusPill>{call.mode==="SIMULATOR"?"Simulation":"Real call"}</StatusPill><StatusPill tone={terminal?(call.state==="COMPLETED"?"good":"danger"):call.state==="NEEDS_USER"?"warn":"good"}>{call.state.replaceAll("_"," ")}</StatusPill></div><h1>{terminal?"Call complete":"Call in progress"}</h1><p>{call.currentObjective}</p></div><div className="call-stats"><div><Clock3/><span>Duration<strong>{formatDuration(call.durationSeconds)}</strong></span></div><div><FileText/><span>Estimated cost<strong>${call.estimatedCostUsd.toFixed(4)}</strong></span></div><div><Gauge/><span>Model tokens<strong>{call.llmInputTokens+call.llmOutputTokens}</strong></span></div></div></section>{call.pendingApproval&&<ApprovalCard key={call.pendingApproval.id} approval={call.pendingApproval} approvalRef={approvalRef} edit={approvalEdit} setEdit={setApprovalEdit} onApprove={()=>void action(`approvals/${call.pendingApproval!.id}/approve`,call.pendingApproval!.category==="PERSONAL_DATA"?{}:{confirmation:"CONFIRM"})} onReject={()=>void action(`approvals/${call.pendingApproval!.id}/reject`)} onReplace={()=>void action(`approvals/${call.pendingApproval!.id}/replace`,{text:approvalEdit,...(call.pendingApproval!.category==="PERSONAL_DATA"?{}:{confirmation:"CONFIRM"})})}/>}<div className="call-grid"><Transcript call={call}/><Controls call={call} terminal={terminal} privateText={privateText} setPrivateText={setPrivateText} exactText={exactText} setExactText={setExactText} action={action}/></div>{terminal&&call.outcome&&<Outcome report={call.outcome} transcript={call.transcript} callId={call.id} onHome={onHome}/>}</div>;
+function Home({
+  cases,
+  config,
+  onNew,
+  onOpen,
+}: {
+  cases: CaseSummary[];
+  config: PublicConfig;
+  onNew: () => void;
+  onOpen: (id: string) => void;
+}) {
+  return (
+    <div className="page home-page">
+      <section className="hero">
+        <div>
+          <p className="eyebrow">Your support-call workspace</p>
+          <h1>A calm, readable way to handle the phone.</h1>
+          <p>Liaison speaks with customer support while you supervise every important decision through text.</p>
+          <button className="primary" onClick={onNew}>
+            <Plus />
+            Create a support case
+          </button>
+        </div>
+        <div className="mode-card">
+          <div className="mode-icon">
+            <PhoneCall />
+          </div>
+          <p>Current calling mode</p>
+          <h2>{config.telephonyMode === "simulator" ? "Safe simulation" : "Twilio live"}</h2>
+          <span>
+            {config.telephonyMode === "simulator"
+              ? "No telephone or model credentials needed"
+              : "Real calls still require explicit confirmation"}
+          </span>
+          <div className="mode-row">
+            <StatusPill>Planning: {config.llmMode}</StatusPill>
+            <StatusPill tone={config.allowRealCalls ? "warn" : "neutral"}>
+              Real calls {config.allowRealCalls ? "enabled" : "off"}
+            </StatusPill>
+          </div>
+        </div>
+      </section>
+      <section className="privacy-strip">
+        <LockKeyhole />
+        <div>
+          <strong>Important privacy boundary</strong>
+          <p>
+            Text transcripts are stored locally. Temporary disclosure values stay only in server memory and are cleared
+            when the call ends.
+          </p>
+        </div>
+      </section>
+      <section className="section-head">
+        <div>
+          <p className="eyebrow">Case history</p>
+          <h2>Recent support cases</h2>
+        </div>
+      </section>
+      {cases.length === 0 ? (
+        <div className="empty-state">
+          <FileText />
+          <h3>No cases yet</h3>
+          <p>Create a case to prepare a plan or try a complete simulation.</p>
+          <button onClick={onNew}>Create your first case</button>
+        </div>
+      ) : (
+        <div className="case-grid">
+          {cases.map((item) => (
+            <button className="case-card" key={item.id} onClick={() => onOpen(item.id)}>
+              <span className="case-company">{item.companyName}</span>
+              <h3>{item.title}</h3>
+              <span className="case-meta">
+                <StatusPill tone={item.status === "COMPLETED" ? "good" : "neutral"}>
+                  {item.status.replaceAll("_", " ")}
+                </StatusPill>
+                <time>{new Date(item.updatedAt).toLocaleDateString()}</time>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
-function Transcript({call}:{call:CallSnapshot}){return <section className="transcript-panel"><div className="panel-head"><div><p className="eyebrow">Live transcript</p><h2>Everything important, in text</h2></div><StatusPill tone={call.paused?"warn":"good"}>{call.activity}</StatusPill></div><div className="transcript" role="log" aria-label="Call transcript" aria-live="polite">{call.transcript.map((turn)=><article id={`turn-${turn.id}`} className={`turn ${turn.speaker.toLowerCase()}`} key={turn.id}><header><strong>{turn.speaker==="REMOTE"?"Representative":turn.speaker==="LIAISON"?"Liaison":turn.speaker==="USER_EXACT"?"You, through Liaison":"Call system"}</strong><time>{new Date(turn.timestamp).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</time></header><p>{turn.text}</p></article>)}{call.transcript.length===0&&<div className="transcript-empty"><MessageSquareText/><p>Transcript turns will appear here as soon as the call begins.</p></div>}</div></section>}
-function Controls({call,terminal,privateText,setPrivateText,exactText,setExactText,action}:{call:CallSnapshot;terminal:boolean;privateText:string;setPrivateText:(value:string)=>void;exactText:string;setExactText:(value:string)=>void;action:(path:string,body?:unknown)=>Promise<void>}){return <aside className="control-panel"><section className="control-card"><p className="eyebrow">Agent status</p><dl className="status-list"><div><dt>Human detected</dt><dd>{call.humanDetected?"Yes":"Not yet"}</dd></div><div><dt>Disclosure delivered</dt><dd>{call.disclosureDelivered?"Yes":"Not yet"}</dd></div><div><dt>Consent</dt><dd>{call.consentStatus.toLowerCase()}</dd></div><div><dt>Activity</dt><dd>{call.activity}</dd></div></dl></section>{!terminal&&<><section className="control-card"><p className="eyebrow">Persistent controls</p><div className="control-row">{call.paused?<button className="primary" onClick={()=>void action("resume")}><Play/>Resume agent</button>:<button onClick={()=>void action("pause")}><Pause/>Pause agent</button>}<button className="danger" onClick={()=>void action("hangup")}><Square/>Hang up</button></div></section><section className="control-card"><Field label="Private steering instruction" hint="Used for the next controller decision; never spoken verbatim."><TextArea rows={3} value={privateText} onChange={setPrivateText}/></Field><button disabled={!privateText.trim()} onClick={()=>{void action("private-instruction",{text:privateText});setPrivateText("")}}>Send privately</button></section><section className="control-card"><Field label="Say this exactly" hint="Spoken as written after hard safety checks."><TextArea rows={3} value={exactText} onChange={setExactText}/></Field><button className="secondary" disabled={!exactText.trim()} onClick={()=>{void action("exact-text",{text:exactText});setExactText("")}}><Volume2/>Speak exact text</button></section></>}<section className="control-card"><p className="eyebrow">Disclosure ledger</p>{call.disclosureLedger.length?<ul className="ledger">{call.disclosureLedger.map((item)=><li key={item.timestamp}><LockKeyhole/><span><strong>{item.label}</strong><small>{item.marker} · {item.channel}</small></span></li>)}</ul>:<p className="muted">No temporary information has been disclosed.</p>}</section></aside>}
-function ApprovalCard({approval,approvalRef,edit,setEdit,onApprove,onReject,onReplace}:{approval:ApprovalRequest;approvalRef:RefObject<HTMLDivElement|null>;edit:string;setEdit:(value:string)=>void;onApprove:()=>void;onReject:()=>void;onReplace:()=>void}){const material=approval.category!=="PERSONAL_DATA";const[confirmed,setConfirmed]=useState(false);return <section ref={approvalRef} tabIndex={-1} role="alertdialog" aria-labelledby="approval-title" aria-describedby="approval-description" className="approval-card"><div className="approval-icon"><CircleAlert/></div><div className="approval-content"><p className="eyebrow">Your decision is required</p><h2 id="approval-title">{approval.question}</h2><p id="approval-description">Liaison will not continue until you choose.</p><dl><div><dt>Representative asked</dt><dd>{approval.representativeRequest}</dd></div><div><dt>Proposed response</dt><dd>{approval.proposedSpeech}</dd></div><div><dt>Why approval is needed</dt><dd>{approval.consequences}</dd></div></dl>{material&&<label className="explicit-confirmation"><input type="checkbox" checked={confirmed} onChange={(event)=>setConfirmed(event.target.checked)}/><span><strong>I understand this is a material decision.</strong> I reviewed the consequence above and intend to approve it.</span></label>}<div className="approval-actions"><button className="primary" disabled={material&&!confirmed} onClick={onApprove}><Check/>Approve</button><button onClick={onReject}>Reject</button></div><details><summary>Edit the proposed response</summary><TextArea rows={3} value={edit} onChange={setEdit} placeholder="Type the exact replacement Liaison should say"/><button disabled={!edit.trim()||(material&&!confirmed)} onClick={onReplace}>Use this response</button></details></div></section>}
-function Outcome({report,transcript,callId,onHome}:{report:OutcomeReport;transcript:CallSnapshot["transcript"];callId:string;onHome:()=>void}){const evidence=(field:{evidence:Array<{turnId:string;exactQuote:string}>}|null)=>field?.evidence.map((item)=><button key={`${item.turnId}-${item.exactQuote}`} className="evidence" onClick={()=>document.getElementById(`turn-${item.turnId}`)?.scrollIntoView({behavior:"smooth",block:"center"})}>“{item.exactQuote}”</button>);return <section className="outcome"><div className="outcome-head"><div><p className="eyebrow">Transcript-grounded report</p><h2>{report.status==="RESOLVED"?"A concrete outcome was confirmed.":"The call ended with items still open."}</h2></div><StatusPill tone={report.status==="RESOLVED"?"good":report.status==="PARTIAL"?"warn":"danger"}>{report.status.replaceAll("_"," ")}</StatusPill></div><div className="outcome-grid"><div className="outcome-card wide-card"><h3>Summary</h3><p>{report.summary?.value??"No grounded summary was available."}</p>{evidence(report.summary)}</div><div className="outcome-card"><h3>Resolution</h3><p>{report.resolution?.value??"Not established"}</p>{evidence(report.resolution)}</div><div className="outcome-card"><h3>Case number</h3><p>{report.caseNumber?.value??"Not provided"}</p>{evidence(report.caseNumber)}</div><div className="outcome-card"><h3>Representative</h3><p>{report.representativeName?.value??"Not established"}</p>{evidence(report.representativeName)}</div><div className="outcome-card"><h3>Duration and estimate</h3><p>{formatDuration(report.durationSeconds)} · ${report.estimatedTelephonyCostUsd.toFixed(4)}</p><small>Estimate only; not an invoice.</small></div></div>{report.unresolvedItems.length>0&&<div className="unresolved"><h3>Unresolved items</h3>{report.unresolvedItems.map((item)=><div key={String(item.value)}><p>{item.value}</p>{evidence(item)}</div>)}</div>}<div className="outcome-actions"><a className="button-link" href={`/api/calls/${callId}/export.txt`} download><Download/>Export text</a><a className="button-link" href={`/api/calls/${callId}/export.json`} download><Download/>Export JSON</a><button className="primary" onClick={onHome}>Return to cases</button></div><p className="evidence-note">Report fields remain only when their exact supporting quote exists in the stored transcript. {transcript.length} transcript turns were reviewed.</p></section>}
+
+interface IntakeData {
+  userFirstName: string;
+  companyName: string;
+  phoneNumber: string;
+  issueDescription: string;
+  chronologyText: string;
+  desiredOutcome: string;
+  acceptableAlternativesText: string;
+  unacceptableOutcomesText: string;
+  knownFactsText: string;
+  disclosures: Array<{
+    label: string;
+    category: string;
+    permission: "ASK";
+    allowedChannels: Array<"SPEECH" | "DTMF">;
+    allowedPurposes: string[];
+    value: string;
+  }>;
+  authority: AuthorityEnvelope;
+  officialNumberConfirmed: boolean;
+  authorizedAccountConfirmed: boolean;
+  lowRiskConfirmed: boolean;
+}
+const initialIntake: IntakeData = {
+  userFirstName: "",
+  companyName: "",
+  phoneNumber: "",
+  issueDescription: "",
+  chronologyText: "",
+  desiredOutcome: "",
+  acceptableAlternativesText: "",
+  unacceptableOutcomesText: "",
+  knownFactsText: "",
+  disclosures: [],
+  authority: defaultAuthority,
+  officialNumberConfirmed: false,
+  authorizedAccountConfirmed: false,
+  lowRiskConfirmed: false,
+};
+function Intake({
+  onCancel,
+  onSubmit,
+  busy,
+}: {
+  onCancel: () => void;
+  onSubmit: (data: IntakeData) => Promise<void>;
+  busy: string;
+}) {
+  const [data, setData] = useState(initialIntake);
+  const [showDisclosure, setShowDisclosure] = useState(false);
+  const set = <K extends keyof IntakeData>(key: K, value: IntakeData[K]) =>
+    setData((old) => ({ ...old, [key]: value }));
+  const disclosure = data.disclosures[0];
+  return (
+    <div className="page narrow">
+      <button className="back" onClick={onCancel}>
+        <ChevronLeft />
+        Cases
+      </button>
+      <div className="title-block">
+        <p className="eyebrow">New support case</p>
+        <h1>Tell Liaison what needs to happen.</h1>
+        <p>Use your own words. The next screen turns this into an editable plan; nothing here starts a call.</p>
+      </div>
+      <form
+        className="intake-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void onSubmit(data);
+        }}
+      >
+        <section className="form-card">
+          <FormHeading
+            number="1"
+            title="Who and where"
+            copy="Enter the support number yourself from an official source."
+          />
+          <div className="two-col">
+            <Field label="Your first name">
+              <input
+                required
+                value={data.userFirstName}
+                onChange={(event) => set("userFirstName", event.target.value)}
+                autoComplete="given-name"
+              />
+            </Field>
+            <Field label="Company name">
+              <input required value={data.companyName} onChange={(event) => set("companyName", event.target.value)} />
+            </Field>
+          </div>
+          <Field
+            label="Official US support number"
+            hint="Liaison validates the format but cannot verify that the number belongs to the company."
+          >
+            <input
+              required
+              inputMode="tel"
+              placeholder="(800) 555-0123"
+              value={data.phoneNumber}
+              onChange={(event) => set("phoneNumber", event.target.value)}
+            />
+          </Field>
+        </section>
+        <section className="form-card">
+          <FormHeading
+            number="2"
+            title="The issue and outcome"
+            copy="Be precise about what happened and what you want."
+          />
+          <Field label="Describe the issue">
+            <TextArea
+              required
+              minLength={20}
+              rows={6}
+              value={data.issueDescription}
+              onChange={(value) => set("issueDescription", value)}
+            />
+          </Field>
+          <Field label="Relevant chronology" hint="One event per line. Leave uncertain dates uncertain.">
+            <TextArea
+              value={data.chronologyText}
+              onChange={(value) => set("chronologyText", value)}
+              placeholder={"Item arrived damaged on May 3\nContacted chat support; no resolution"}
+            />
+          </Field>
+          <Field label="Desired resolution">
+            <TextArea
+              required
+              rows={3}
+              value={data.desiredOutcome}
+              onChange={(value) => set("desiredOutcome", value)}
+            />
+          </Field>
+          <div className="two-col">
+            <Field label="Acceptable alternatives" hint="One per line">
+              <TextArea
+                rows={3}
+                value={data.acceptableAlternativesText}
+                onChange={(value) => set("acceptableAlternativesText", value)}
+              />
+            </Field>
+            <Field label="Unacceptable outcomes" hint="One per line">
+              <TextArea
+                rows={3}
+                value={data.unacceptableOutcomesText}
+                onChange={(value) => set("unacceptableOutcomesText", value)}
+              />
+            </Field>
+          </div>
+          <Field
+            label="Facts the assistant may use"
+            hint="One fact per line. Do not enter passwords or one-time codes."
+          >
+            <TextArea rows={4} value={data.knownFactsText} onChange={(value) => set("knownFactsText", value)} />
+          </Field>
+        </section>
+        <section className="form-card">
+          <FormHeading
+            number="3"
+            title="Temporary sensitive information"
+            copy="Optional values are held only in server memory and always require approval."
+          />
+          {!showDisclosure ? (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                setShowDisclosure(true);
+                set("disclosures", [
+                  {
+                    label: "Account number",
+                    category: "ACCOUNT_NUMBER",
+                    permission: "ASK",
+                    allowedChannels: ["DTMF"],
+                    allowedPurposes: ["Account authentication"],
+                    value: "",
+                  },
+                ]);
+              }}
+            >
+              <Plus />
+              Add a disclosure card
+            </button>
+          ) : (
+            <div className="disclosure-editor">
+              <div className="two-col">
+                <Field label="Label">
+                  <input
+                    value={disclosure?.label ?? ""}
+                    onChange={(event) => set("disclosures", [{ ...disclosure, label: event.target.value }])}
+                  />
+                </Field>
+                <Field label="Category">
+                  <select
+                    value={disclosure?.category}
+                    onChange={(event) => set("disclosures", [{ ...disclosure, category: event.target.value }])}
+                  >
+                    <option value="ACCOUNT_NUMBER">Account number</option>
+                    <option value="ORDER_NUMBER">Order number</option>
+                    <option value="ADDRESS">Address</option>
+                    <option value="DATE_OF_BIRTH">Date of birth</option>
+                    <option value="EMAIL">Email</option>
+                    <option value="PHONE">Phone</option>
+                    <option value="ZIP_CODE">ZIP code</option>
+                    <option value="OTHER_ALLOWED">Other allowed</option>
+                  </select>
+                </Field>
+              </div>
+              <Field
+                label="Temporary value"
+                hint="Never enter a password, code, full Social Security number, card number, CVV, or PIN."
+              >
+                <input
+                  required
+                  value={disclosure?.value ?? ""}
+                  onChange={(event) => set("disclosures", [{ ...disclosure, value: event.target.value }])}
+                />
+              </Field>
+              <button
+                type="button"
+                className="text-button danger-text"
+                onClick={() => {
+                  setShowDisclosure(false);
+                  set("disclosures", []);
+                }}
+              >
+                Remove card
+              </button>
+            </div>
+          )}
+        </section>
+        <section className="form-card">
+          <FormHeading
+            number="4"
+            title="Safety confirmations"
+            copy="Real calls are limited to low-risk support for accounts you may manage."
+          />
+          <div className="checks">
+            <label>
+              <input
+                type="checkbox"
+                checked={data.officialNumberConfirmed}
+                onChange={(event) => set("officialNumberConfirmed", event.target.checked)}
+              />
+              <span>I obtained this number from an official company source.</span>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={data.authorizedAccountConfirmed}
+                onChange={(event) => set("authorizedAccountConfirmed", event.target.checked)}
+              />
+              <span>I am calling about my own account or one I am authorized to manage.</span>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={data.lowRiskConfirmed}
+                onChange={(event) => set("lowRiskConfirmed", event.target.checked)}
+              />
+              <span>
+                This is not emergency, medical, legal, financial, insurance, government, debt, employment, immigration,
+                or law-enforcement business.
+              </span>
+            </label>
+          </div>
+        </section>
+        <div className="form-actions">
+          <button type="button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            className="primary"
+            disabled={
+              Boolean(busy) ||
+              !data.officialNumberConfirmed ||
+              !data.authorizedAccountConfirmed ||
+              !data.lowRiskConfirmed
+            }
+          >
+            {busy || "Create editable plan"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+function FormHeading({ number, title, copy }: { number: string; title: string; copy: string }) {
+  return (
+    <div className="form-card-head">
+      <span>{number}</span>
+      <div>
+        <h2>{title}</h2>
+        <p>{copy}</p>
+      </div>
+    </div>
+  );
+}
+
+function Plan({
+  caseItem,
+  config,
+  scenarios,
+  onBack,
+  onSaved,
+  onCall,
+  setBusy,
+  setError,
+}: {
+  caseItem: CaseDetail;
+  config: PublicConfig;
+  scenarios: Scenario[];
+  onBack: () => void;
+  onSaved: (brief: CallBrief) => void;
+  onCall: (call: CallSnapshot) => void;
+  setBusy: (value: string) => void;
+  setError: (value: string) => void;
+}) {
+  const [brief, setBrief] = useState(caseItem.brief!);
+  const [scenarioId, setScenarioId] = useState(scenarios[0]?.id ?? "");
+  const [approved, setApproved] = useState(caseItem.approvedVersion === brief.version);
+  const update = <K extends keyof CallBrief>(key: K, value: CallBrief[K]) => {
+    setBrief((old) => ({ ...old, [key]: value }));
+    setApproved(false);
+  };
+  const save = async () => {
+    setBusy("Saving plan");
+    try {
+      const result = await patch<CallBrief>(`/api/cases/${caseItem.id}/plan`, brief);
+      setBrief(result);
+      onSaved(result);
+      return result;
+    } finally {
+      setBusy("");
+    }
+  };
+  const approve = async () => {
+    await save();
+    await post(`/api/cases/${caseItem.id}/plan/approve`);
+    setApproved(true);
+  };
+  const start = async () => {
+    setError("");
+    setBusy("Starting developer simulation");
+    try {
+      if (!approved) await approve();
+      const snapshot = await post<CallSnapshot>(`/api/cases/${caseItem.id}/simulate`, {
+        scenarioId,
+        accelerated: false,
+      });
+      onCall(snapshot);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not start simulation");
+    } finally {
+      setBusy("");
+    }
+  };
+  return (
+    <div className="page plan-page">
+      <button className="back" onClick={onBack}>
+        <ChevronLeft />
+        Cases
+      </button>
+      <div className="plan-title">
+        <div>
+          <p className="eyebrow">Review the call plan</p>
+          <h1>{brief.title}</h1>
+          <p>Everything below remains under your control. Review it before authorizing a simulation or call.</p>
+        </div>
+        <StatusPill tone={approved ? "good" : "warn"}>{approved ? "Plan approved" : "Approval required"}</StatusPill>
+      </div>
+      <div className="plan-layout">
+        <div className="plan-main">
+          <section className="form-card">
+            <h2>Issue and target</h2>
+            <Field label="Plan title">
+              <input value={brief.title} onChange={(event) => update("title", event.target.value)} />
+            </Field>
+            <Field label="Issue summary">
+              <TextArea rows={5} value={brief.issueSummary} onChange={(value) => update("issueSummary", value)} />
+            </Field>
+            <Field label="Desired outcome">
+              <TextArea rows={3} value={brief.desiredOutcome} onChange={(value) => update("desiredOutcome", value)} />
+            </Field>
+            <div className="two-col">
+              <Field label="Acceptable alternatives" hint="One per line">
+                <TextArea
+                  value={fromLines(brief.acceptableAlternatives)}
+                  onChange={(value) => update("acceptableAlternatives", toLines(value))}
+                />
+              </Field>
+              <Field label="Unacceptable outcomes" hint="One per line">
+                <TextArea
+                  value={fromLines(brief.unacceptableOutcomes)}
+                  onChange={(value) => update("unacceptableOutcomes", toLines(value))}
+                />
+              </Field>
+            </div>
+          </section>
+          <section className="form-card">
+            <h2>What Liaison will say and do</h2>
+            <Field label="Opening issue statement">
+              <TextArea
+                rows={4}
+                value={brief.openingIssueStatement}
+                onChange={(value) => update("openingIssueStatement", value)}
+              />
+            </Field>
+            <Field label="Strategy steps" hint="One per line; up to eight">
+              <TextArea
+                rows={7}
+                value={fromLines(brief.strategySteps)}
+                onChange={(value) => update("strategySteps", toLines(value).slice(0, 8))}
+              />
+            </Field>
+            <Field label="Likely approval points">
+              <TextArea
+                rows={4}
+                value={fromLines(brief.likelyApprovalPoints)}
+                onChange={(value) => update("likelyApprovalPoints", toLines(value).slice(0, 6))}
+              />
+            </Field>
+          </section>
+          <section className="form-card">
+            <h2>Known and missing information</h2>
+            <div className="two-col">
+              <Field label="Known facts">
+                <TextArea
+                  rows={5}
+                  value={fromLines(brief.knownFacts)}
+                  onChange={(value) => update("knownFacts", toLines(value))}
+                />
+              </Field>
+              <Field label="Unresolved questions">
+                <TextArea
+                  rows={5}
+                  value={fromLines(brief.unresolvedQuestions)}
+                  onChange={(value) => update("unresolvedQuestions", toLines(value))}
+                />
+              </Field>
+            </div>
+            <Field label="Warnings">
+              <TextArea
+                rows={4}
+                value={fromLines(brief.warnings)}
+                onChange={(value) => update("warnings", toLines(value))}
+              />
+            </Field>
+          </section>
+        </div>
+        <aside className="plan-side">
+          <section className="side-card">
+            <p className="eyebrow">Call boundary</p>
+            <h2>Automatic vs. ask first</h2>
+            <ul className="permission-list">
+              <li>
+                <Check />
+                Explain issue and ask questions <StatusPill tone="good">Allow</StatusPill>
+              </li>
+              <li>
+                <Check />
+                Navigate IVR and request escalation <StatusPill tone="good">Allow</StatusPill>
+              </li>
+              <li>
+                <CircleAlert />
+                Personal data and changed outcomes <StatusPill tone="warn">Ask</StatusPill>
+              </li>
+              <li>
+                <Square />
+                Purchases, credentials, legal waivers <StatusPill tone="danger">Never</StatusPill>
+              </li>
+            </ul>
+            <Field label="Maximum authorized cost (cents)">
+              <input
+                type="number"
+                min="0"
+                value={brief.authority.maximumAuthorizedCostCents}
+                onChange={(event) =>
+                  update("authority", { ...brief.authority, maximumAuthorizedCostCents: Number(event.target.value) })
+                }
+              />
+            </Field>
+          </section>
+          <section className="side-card">
+            <p className="eyebrow">Cost guardrail</p>
+            <div className="cost-big">${(config.maxDurationMinutes * config.estimatedCostPerMinuteUsd).toFixed(2)}</div>
+            <p>
+              Estimated maximum at {config.maxDurationMinutes} minutes. Excludes taxes, number rental, and
+              destination-specific charges.
+            </p>
+          </section>
+          <section className="side-card start-card">
+            <p className="eyebrow">Developer simulator</p>
+            <Field label="Simulation scenario">
+              <select value={scenarioId} onChange={(event) => setScenarioId(event.target.value)}>
+                {scenarios.map((scenario) => (
+                  <option key={scenario.id} value={scenario.id}>
+                    {scenario.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <p className="scenario-copy">{scenarios.find((item) => item.id === scenarioId)?.description}</p>
+            {config.developmentBypass ? (
+              <button className="primary wide" onClick={() => void start()}>
+                <Play />
+                Approve and run developer scenario
+              </button>
+            ) : (
+              <small>
+                Production calls and simulations start only from the messaging thread after plan review and an exact
+                one-time CALL code.
+              </small>
+            )}
+            <button className="text-button wide" onClick={() => void save()}>
+              Save edits only
+            </button>
+          </section>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function Live({
+  initial,
+  onUpdate,
+  onHome,
+  setError,
+}: {
+  initial: CallSnapshot;
+  onUpdate: (call: CallSnapshot) => void;
+  onHome: () => void;
+  setError: (value: string) => void;
+}) {
+  const [call, setCall] = useState(initial);
+  const [privateText, setPrivateText] = useState("");
+  const [exactText, setExactText] = useState("");
+  const [approvalEdit, setApprovalEdit] = useState("");
+  const approvalRef = useRef<HTMLDivElement>(null);
+  const terminal = call.state === "COMPLETED" || call.state === "FAILED";
+  useEffect(() => {
+    let stopped = false;
+    const refresh = async () => {
+      const next = await api<CallSnapshot>(`/api/calls/${initial.id}`);
+      if (!stopped) {
+        setCall(next);
+        onUpdate(next);
+      }
+    };
+    const source = new EventSource(`/api/calls/${initial.id}/events`);
+    const update = () => void refresh();
+    [
+      "snapshot",
+      "call.state",
+      "call.status",
+      "call.activity",
+      "transcript.turn",
+      "approval.requested",
+      "approval.resolved",
+      "duration.updated",
+      "outcome.ready",
+      "error",
+    ].forEach((name) => source.addEventListener(name, update));
+    source.onerror = () => {
+      if (!terminal) setError("Live updates were interrupted. Liaison is reconnecting automatically.");
+    };
+    return () => {
+      stopped = true;
+      source.close();
+    };
+  }, [initial.id, onUpdate, setError, terminal]);
+  useEffect(() => {
+    if (call.pendingApproval) approvalRef.current?.focus();
+  }, [call.pendingApproval]);
+  const action = async (path: string, body: unknown = {}) => {
+    try {
+      const next = await post<CallSnapshot>(`/api/calls/${call.id}/${path}`, body);
+      setCall(next);
+      onUpdate(next);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Action failed");
+    }
+  };
+  return (
+    <div className="call-page">
+      <section className="call-top">
+        <div>
+          <div className="call-badges">
+            <StatusPill>{call.mode === "SIMULATOR" ? "Simulation" : "Real call"}</StatusPill>
+            <StatusPill
+              tone={
+                terminal
+                  ? call.state === "COMPLETED"
+                    ? "good"
+                    : "danger"
+                  : call.state === "NEEDS_USER"
+                    ? "warn"
+                    : "good"
+              }
+            >
+              {call.state.replaceAll("_", " ")}
+            </StatusPill>
+          </div>
+          <h1>{terminal ? "Call complete" : "Call in progress"}</h1>
+          <p>{call.currentObjective}</p>
+        </div>
+        <div className="call-stats">
+          <div>
+            <Clock3 />
+            <span>
+              Duration<strong>{formatDuration(call.durationSeconds)}</strong>
+            </span>
+          </div>
+          <div>
+            <FileText />
+            <span>
+              Estimated cost<strong>${call.estimatedCostUsd.toFixed(4)}</strong>
+            </span>
+          </div>
+          <div>
+            <Gauge />
+            <span>
+              Model tokens<strong>{call.llmInputTokens + call.llmOutputTokens}</strong>
+            </span>
+          </div>
+        </div>
+      </section>
+      {call.pendingApproval && (
+        <ApprovalCard
+          key={call.pendingApproval.id}
+          approval={call.pendingApproval}
+          approvalRef={approvalRef}
+          edit={approvalEdit}
+          setEdit={setApprovalEdit}
+          onApprove={() =>
+            void action(
+              `approvals/${call.pendingApproval!.id}/approve`,
+              call.pendingApproval!.category === "PERSONAL_DATA" ? {} : { confirmation: "CONFIRM" },
+            )
+          }
+          onReject={() => void action(`approvals/${call.pendingApproval!.id}/reject`)}
+          onReplace={() =>
+            void action(`approvals/${call.pendingApproval!.id}/replace`, {
+              text: approvalEdit,
+              ...(call.pendingApproval!.category === "PERSONAL_DATA" ? {} : { confirmation: "CONFIRM" }),
+            })
+          }
+        />
+      )}
+      <div className="call-grid">
+        <Transcript call={call} />
+        <Controls
+          call={call}
+          terminal={terminal}
+          privateText={privateText}
+          setPrivateText={setPrivateText}
+          exactText={exactText}
+          setExactText={setExactText}
+          action={action}
+        />
+      </div>
+      {terminal && call.outcome && (
+        <Outcome report={call.outcome} transcript={call.transcript} callId={call.id} onHome={onHome} />
+      )}
+    </div>
+  );
+}
+function Transcript({ call }: { call: CallSnapshot }) {
+  return (
+    <section className="transcript-panel">
+      <div className="panel-head">
+        <div>
+          <p className="eyebrow">Live transcript</p>
+          <h2>Everything important, in text</h2>
+        </div>
+        <StatusPill tone={call.paused ? "warn" : "good"}>{call.activity}</StatusPill>
+      </div>
+      <div className="transcript" role="log" aria-label="Call transcript" aria-live="polite">
+        {call.transcript.map((turn) => (
+          <article id={`turn-${turn.id}`} className={`turn ${turn.speaker.toLowerCase()}`} key={turn.id}>
+            <header>
+              <strong>
+                {turn.speaker === "REMOTE"
+                  ? "Representative"
+                  : turn.speaker === "LIAISON"
+                    ? "Liaison"
+                    : turn.speaker === "USER_EXACT"
+                      ? "You, through Liaison"
+                      : "Call system"}
+              </strong>
+              <time>
+                {new Date(turn.timestamp).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}
+              </time>
+            </header>
+            <p>{turn.text}</p>
+          </article>
+        ))}
+        {call.transcript.length === 0 && (
+          <div className="transcript-empty">
+            <MessageSquareText />
+            <p>Transcript turns will appear here as soon as the call begins.</p>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+function Controls({
+  call,
+  terminal,
+  privateText,
+  setPrivateText,
+  exactText,
+  setExactText,
+  action,
+}: {
+  call: CallSnapshot;
+  terminal: boolean;
+  privateText: string;
+  setPrivateText: (value: string) => void;
+  exactText: string;
+  setExactText: (value: string) => void;
+  action: (path: string, body?: unknown) => Promise<void>;
+}) {
+  return (
+    <aside className="control-panel">
+      <section className="control-card">
+        <p className="eyebrow">Agent status</p>
+        <dl className="status-list">
+          <div>
+            <dt>Human detected</dt>
+            <dd>{call.humanDetected ? "Yes" : "Not yet"}</dd>
+          </div>
+          <div>
+            <dt>Disclosure delivered</dt>
+            <dd>{call.disclosureDelivered ? "Yes" : "Not yet"}</dd>
+          </div>
+          <div>
+            <dt>Consent</dt>
+            <dd>{call.consentStatus.toLowerCase()}</dd>
+          </div>
+          <div>
+            <dt>Activity</dt>
+            <dd>{call.activity}</dd>
+          </div>
+        </dl>
+      </section>
+      {!terminal && (
+        <>
+          <section className="control-card">
+            <p className="eyebrow">Persistent controls</p>
+            <div className="control-row">
+              {call.paused ? (
+                <button className="primary" onClick={() => void action("resume")}>
+                  <Play />
+                  Resume agent
+                </button>
+              ) : (
+                <button onClick={() => void action("pause")}>
+                  <Pause />
+                  Pause agent
+                </button>
+              )}
+              <button className="danger" onClick={() => void action("hangup")}>
+                <Square />
+                Hang up
+              </button>
+            </div>
+          </section>
+          <section className="control-card">
+            <Field
+              label="Private steering instruction"
+              hint="Used for the next controller decision; never spoken verbatim."
+            >
+              <TextArea rows={3} value={privateText} onChange={setPrivateText} />
+            </Field>
+            <button
+              disabled={!privateText.trim()}
+              onClick={() => {
+                void action("private-instruction", { text: privateText });
+                setPrivateText("");
+              }}
+            >
+              Send privately
+            </button>
+          </section>
+          <section className="control-card">
+            <Field label="Say this exactly" hint="Spoken as written after hard safety checks.">
+              <TextArea rows={3} value={exactText} onChange={setExactText} />
+            </Field>
+            <button
+              className="secondary"
+              disabled={!exactText.trim()}
+              onClick={() => {
+                void action("exact-text", { text: exactText });
+                setExactText("");
+              }}
+            >
+              <Volume2 />
+              Speak exact text
+            </button>
+          </section>
+        </>
+      )}
+      <section className="control-card">
+        <p className="eyebrow">Disclosure ledger</p>
+        {call.disclosureLedger.length ? (
+          <ul className="ledger">
+            {call.disclosureLedger.map((item) => (
+              <li key={item.timestamp}>
+                <LockKeyhole />
+                <span>
+                  <strong>{item.label}</strong>
+                  <small>
+                    {item.marker} · {item.channel}
+                  </small>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted">No temporary information has been disclosed.</p>
+        )}
+      </section>
+    </aside>
+  );
+}
+function ApprovalCard({
+  approval,
+  approvalRef,
+  edit,
+  setEdit,
+  onApprove,
+  onReject,
+  onReplace,
+}: {
+  approval: ApprovalRequest;
+  approvalRef: RefObject<HTMLDivElement | null>;
+  edit: string;
+  setEdit: (value: string) => void;
+  onApprove: () => void;
+  onReject: () => void;
+  onReplace: () => void;
+}) {
+  const material = approval.category !== "PERSONAL_DATA";
+  const [confirmed, setConfirmed] = useState(false);
+  return (
+    <section
+      ref={approvalRef}
+      tabIndex={-1}
+      role="alertdialog"
+      aria-labelledby="approval-title"
+      aria-describedby="approval-description"
+      className="approval-card"
+    >
+      <div className="approval-icon">
+        <CircleAlert />
+      </div>
+      <div className="approval-content">
+        <p className="eyebrow">Your decision is required</p>
+        <h2 id="approval-title">{approval.question}</h2>
+        <p id="approval-description">Liaison will not continue until you choose.</p>
+        <dl>
+          <div>
+            <dt>Representative asked</dt>
+            <dd>{approval.representativeRequest}</dd>
+          </div>
+          <div>
+            <dt>Proposed response</dt>
+            <dd>{approval.proposedSpeech}</dd>
+          </div>
+          <div>
+            <dt>Why approval is needed</dt>
+            <dd>{approval.consequences}</dd>
+          </div>
+        </dl>
+        {material && (
+          <label className="explicit-confirmation">
+            <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
+            <span>
+              <strong>I understand this is a material decision.</strong> I reviewed the consequence above and intend to
+              approve it.
+            </span>
+          </label>
+        )}
+        <div className="approval-actions">
+          <button className="primary" disabled={material && !confirmed} onClick={onApprove}>
+            <Check />
+            Approve
+          </button>
+          <button onClick={onReject}>Reject</button>
+        </div>
+        <details>
+          <summary>Edit the proposed response</summary>
+          <TextArea
+            rows={3}
+            value={edit}
+            onChange={setEdit}
+            placeholder="Type the exact replacement Liaison should say"
+          />
+          <button disabled={!edit.trim() || (material && !confirmed)} onClick={onReplace}>
+            Use this response
+          </button>
+        </details>
+      </div>
+    </section>
+  );
+}
+function Outcome({
+  report,
+  transcript,
+  callId,
+  onHome,
+}: {
+  report: OutcomeReport;
+  transcript: CallSnapshot["transcript"];
+  callId: string;
+  onHome: () => void;
+}) {
+  const evidence = (field: { evidence: Array<{ turnId: string; exactQuote: string }> } | null) =>
+    field?.evidence.map((item) => (
+      <button
+        key={`${item.turnId}-${item.exactQuote}`}
+        className="evidence"
+        onClick={() =>
+          document.getElementById(`turn-${item.turnId}`)?.scrollIntoView({ behavior: "smooth", block: "center" })
+        }
+      >
+        “{item.exactQuote}”
+      </button>
+    ));
+  return (
+    <section className="outcome">
+      <div className="outcome-head">
+        <div>
+          <p className="eyebrow">Transcript-grounded report</p>
+          <h2>
+            {report.status === "RESOLVED"
+              ? "A concrete outcome was confirmed."
+              : "The call ended with items still open."}
+          </h2>
+        </div>
+        <StatusPill tone={report.status === "RESOLVED" ? "good" : report.status === "PARTIAL" ? "warn" : "danger"}>
+          {report.status.replaceAll("_", " ")}
+        </StatusPill>
+      </div>
+      <div className="outcome-grid">
+        <div className="outcome-card wide-card">
+          <h3>Summary</h3>
+          <p>{report.summary?.value ?? "No grounded summary was available."}</p>
+          {evidence(report.summary)}
+        </div>
+        <div className="outcome-card">
+          <h3>Resolution</h3>
+          <p>{report.resolution?.value ?? "Not established"}</p>
+          {evidence(report.resolution)}
+        </div>
+        <div className="outcome-card">
+          <h3>Case number</h3>
+          <p>{report.caseNumber?.value ?? "Not provided"}</p>
+          {evidence(report.caseNumber)}
+        </div>
+        <div className="outcome-card">
+          <h3>Representative</h3>
+          <p>{report.representativeName?.value ?? "Not established"}</p>
+          {evidence(report.representativeName)}
+        </div>
+        <div className="outcome-card">
+          <h3>Duration and estimate</h3>
+          <p>
+            {formatDuration(report.durationSeconds)} · ${report.estimatedTelephonyCostUsd.toFixed(4)}
+          </p>
+          <small>Estimate only; not an invoice.</small>
+        </div>
+      </div>
+      {report.unresolvedItems.length > 0 && (
+        <div className="unresolved">
+          <h3>Unresolved items</h3>
+          {report.unresolvedItems.map((item) => (
+            <div key={String(item.value)}>
+              <p>{item.value}</p>
+              {evidence(item)}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="outcome-actions">
+        <a className="button-link" href={`/api/calls/${callId}/export.txt`} download>
+          <Download />
+          Export text
+        </a>
+        <a className="button-link" href={`/api/calls/${callId}/export.json`} download>
+          <Download />
+          Export JSON
+        </a>
+        <button className="primary" onClick={onHome}>
+          Return to cases
+        </button>
+      </div>
+      <p className="evidence-note">
+        Report fields remain only when their exact supporting quote exists in the stored transcript. {transcript.length}{" "}
+        transcript turns were reviewed.
+      </p>
+    </section>
+  );
+}

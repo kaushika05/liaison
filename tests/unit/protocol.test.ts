@@ -88,10 +88,34 @@ describe("deterministic attention policy", () => {
   it("assigns every action to its policy tier without a model suggestion", () => {
     const groups: Record<string, AttentionAction[]> = {
       INFORMATIONAL: ["STATUS_UPDATE", "DEPARTMENT_REACHED", "HOLD_STARTED", "CASE_NUMBER_RECEIVED", "FACT_CONFIRMED"],
-      LOW_CONSEQUENCE: ["CONTINUE_WAITING", "ASK_FOR_SUPERVISOR", "REPEAT_EXPLANATION", "KEEP_NEGOTIATING", "ZERO_COST_PROCEDURAL_STEP"],
+      LOW_CONSEQUENCE: [
+        "CONTINUE_WAITING",
+        "ASK_FOR_SUPERVISOR",
+        "REPEAT_EXPLANATION",
+        "KEEP_NEGOTIATING",
+        "ZERO_COST_PROCEDURAL_STEP",
+      ],
       SENSITIVE: ["DISCLOSE_PERSONAL_DATA", "SUBMIT_SENSITIVE_DTMF"],
-      MATERIAL: ["ACCEPT_FINANCIAL_OUTCOME", "MODIFY_ACCOUNT", "CANCEL_SERVICE", "CHANGE_APPOINTMENT", "ACCEPT_ALTERNATIVE_OUTCOME", "CREATE_RECURRING_COMMITMENT"],
-      PROHIBITED: ["DISCLOSE_CREDENTIAL", "DISCLOSE_OTP", "DISCLOSE_FULL_SSN", "DISCLOSE_PAYMENT_CARD", "DISCLOSE_SECURITY_ANSWER", "DISCLOSE_PIN", "MAKE_PURCHASE", "ENTER_NEW_CONTRACT", "IMPERSONATE_USER", "WAIVE_LEGAL_RIGHT"],
+      MATERIAL: [
+        "ACCEPT_FINANCIAL_OUTCOME",
+        "MODIFY_ACCOUNT",
+        "CANCEL_SERVICE",
+        "CHANGE_APPOINTMENT",
+        "ACCEPT_ALTERNATIVE_OUTCOME",
+        "CREATE_RECURRING_COMMITMENT",
+      ],
+      PROHIBITED: [
+        "DISCLOSE_CREDENTIAL",
+        "DISCLOSE_OTP",
+        "DISCLOSE_FULL_SSN",
+        "DISCLOSE_PAYMENT_CARD",
+        "DISCLOSE_SECURITY_ANSWER",
+        "DISCLOSE_PIN",
+        "MAKE_PURCHASE",
+        "ENTER_NEW_CONTRACT",
+        "IMPERSONATE_USER",
+        "WAIVE_LEGAL_RIGHT",
+      ],
     };
     for (const [tier, actions] of Object.entries(groups)) {
       for (const action of actions) expect(assignAttentionTier(action)).toBe(tier);
@@ -108,7 +132,12 @@ describe("deterministic attention policy", () => {
     const current = lowConsequenceRequest();
     expect(isSmsEligibleAttentionRequest(current, new Date("2026-08-12T20:01:00.000Z"))).toBe(true);
     expect(isSmsEligibleAttentionRequest(current, new Date("2026-08-12T20:05:00.000Z"))).toBe(false);
-    expect(isSmsEligibleAttentionRequest(lowConsequenceRequest({ status: "REJECTED" }), new Date("2026-08-12T20:01:00.000Z"))).toBe(false);
+    expect(
+      isSmsEligibleAttentionRequest(
+        lowConsequenceRequest({ status: "REJECTED" }),
+        new Date("2026-08-12T20:01:00.000Z"),
+      ),
+    ).toBe(false);
   });
 
   it("rejects SMS resolution metadata for sensitive or material requests", () => {
@@ -150,10 +179,20 @@ describe("conditional authority", () => {
   ];
 
   it("evaluates monetary threshold ladders using integer cents", () => {
-    expect(evaluateConditionalAuthority(refundRules, { subject: "REFUND", amountCents: 4_000 })).toMatchObject({ decision: "ALLOW" });
-    expect(evaluateConditionalAuthority(refundRules, { subject: "REFUND", amountCents: 2_500 })).toMatchObject({ decision: "ASK" });
-    expect(evaluateConditionalAuthority(refundRules, { subject: "REFUND", amountCents: 1_999 })).toMatchObject({ decision: "DENY" });
-    expect(evaluateConditionalAuthority(refundRules, { subject: "CREDIT", amountCents: 4_000 })).toEqual({ source: "NO_MATCH", decision: null, matchedRuleIds: [] });
+    expect(evaluateConditionalAuthority(refundRules, { subject: "REFUND", amountCents: 4_000 })).toMatchObject({
+      decision: "ALLOW",
+    });
+    expect(evaluateConditionalAuthority(refundRules, { subject: "REFUND", amountCents: 2_500 })).toMatchObject({
+      decision: "ASK",
+    });
+    expect(evaluateConditionalAuthority(refundRules, { subject: "REFUND", amountCents: 1_999 })).toMatchObject({
+      decision: "DENY",
+    });
+    expect(evaluateConditionalAuthority(refundRules, { subject: "CREDIT", amountCents: 4_000 })).toEqual({
+      source: "NO_MATCH",
+      decision: null,
+      matchedRuleIds: [],
+    });
   });
 
   it("lets exact rules override a threshold and hard denial override every rule", () => {
@@ -161,7 +200,9 @@ describe("conditional authority", () => {
       ...refundRules,
       { id: "exact-review", subject: "REFUND", comparison: "EXACTLY", amountCents: 3_500, decision: "ASK" },
     ];
-    expect(evaluateConditionalAuthority(rules, { subject: "REFUND", amountCents: 3_500 })).toMatchObject({ decision: "ASK" });
+    expect(evaluateConditionalAuthority(rules, { subject: "REFUND", amountCents: 3_500 })).toMatchObject({
+      decision: "ASK",
+    });
     expect(evaluateConditionalAuthority(rules, { subject: "REFUND", amountCents: 9_999, hardDenied: true })).toEqual({
       source: "HARD_POLICY",
       decision: "DENY",
@@ -186,8 +227,23 @@ describe("conditional authority", () => {
   });
 
   it("rejects invalid monetary and non-monetary rule shapes", () => {
-    expect(conditionalAuthorityRuleSchema.safeParse({ id: "bad-1", subject: "REFUND", comparison: "AT_LEAST", decision: "ALLOW" }).success).toBe(false);
-    expect(conditionalAuthorityRuleSchema.safeParse({ id: "bad-2", subject: "PLAN_CHANGE", comparison: "AT_LEAST", amountCents: 1, decision: "DENY" }).success).toBe(false);
+    expect(
+      conditionalAuthorityRuleSchema.safeParse({
+        id: "bad-1",
+        subject: "REFUND",
+        comparison: "AT_LEAST",
+        decision: "ALLOW",
+      }).success,
+    ).toBe(false);
+    expect(
+      conditionalAuthorityRuleSchema.safeParse({
+        id: "bad-2",
+        subject: "PLAN_CHANGE",
+        comparison: "AT_LEAST",
+        amountCents: 1,
+        decision: "DENY",
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -203,15 +259,20 @@ describe("commitment and semantic event evidence", () => {
     };
     expect(commitmentSchema.safeParse({ ...base, status: "UNVERIFIED" }).success).toBe(true);
     expect(commitmentSchema.safeParse({ ...base, status: "CONFIRMED" }).success).toBe(false);
-    expect(commitmentSchema.safeParse({
-      ...base,
-      status: "CONFIRMED",
-      evidence: [{ turnId: "turn-14", exactQuote: "I have applied a $35 account credit." }],
-    }).success).toBe(true);
+    expect(
+      commitmentSchema.safeParse({
+        ...base,
+        status: "CONFIRMED",
+        evidence: [{ turnId: "turn-14", exactQuote: "I have applied a $35 account credit." }],
+      }).success,
+    ).toBe(true);
   });
 
   it("requires evidence for verified facts, case numbers, and deadlines", () => {
-    expect(semanticCallEventSchema.safeParse({ kind: "FACT_CONFIRMED", fact: "The duplicate fee exists.", evidence: [] }).success).toBe(false);
+    expect(
+      semanticCallEventSchema.safeParse({ kind: "FACT_CONFIRMED", fact: "The duplicate fee exists.", evidence: [] })
+        .success,
+    ).toBe(false);
     expect(semanticCallEventSchema.safeParse({ kind: "CASE_NUMBER_RECEIVED", evidence: [] }).success).toBe(false);
     expect(semanticCallEventSchema.safeParse({ kind: "DEADLINE_RECEIVED", evidence: [] }).success).toBe(false);
   });
@@ -220,8 +281,9 @@ describe("commitment and semantic event evidence", () => {
     const first = semanticCallEventDedupKey({ kind: "DEPARTMENT_REACHED", department: " Billing   Support " });
     const second = semanticCallEventDedupKey({ kind: "DEPARTMENT_REACHED", department: "billing support" });
     expect(first).toBe(second);
-    expect(semanticCallEventDedupKey({ kind: "OFFER_MADE", description: "Account credit", amountCents: 3_500 }))
-      .not.toBe(semanticCallEventDedupKey({ kind: "OFFER_MADE", description: "Account credit", amountCents: 2_000 }));
+    expect(
+      semanticCallEventDedupKey({ kind: "OFFER_MADE", description: "Account credit", amountCents: 3_500 }),
+    ).not.toBe(semanticCallEventDedupKey({ kind: "OFFER_MADE", description: "Account credit", amountCents: 2_000 }));
   });
 });
 

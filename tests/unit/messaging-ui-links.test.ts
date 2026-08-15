@@ -36,7 +36,11 @@ describe("messaging UI secure-action links", () => {
     const callPath = "/calls/00000000-0000-4000-8000-000000000001";
     expect(safeSameOriginCallHref(callPath, origin)).toBe(callPath);
     expect(safeSameOriginCallHref(`${origin}${callPath}`, origin)).toBe(callPath);
-    expect(sameOriginCallLinkParts(`(${origin}${callPath}).`, origin)).toEqual({ prefix: "(", href: callPath, suffix: ")." });
+    expect(sameOriginCallLinkParts(`(${origin}${callPath}).`, origin)).toEqual({
+      prefix: "(",
+      href: callPath,
+      suffix: ").",
+    });
     expect(safeSameOriginCallHref(`https://evil.example${callPath}`, origin)).toBeNull();
     expect(safeSameOriginCallHref("/calls/not-a-call-id", origin)).toBeNull();
     expect(safeSameOriginCallHref(`${callPath}?download=true`, origin)).toBeNull();

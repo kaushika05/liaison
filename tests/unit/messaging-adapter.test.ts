@@ -50,17 +50,24 @@ describe("messaging adapters", () => {
     };
     const signature = twilio.getExpectedTwilioSignature(authToken, inboundWebhookUrl, form);
     const sms = adapter();
-    await expect(sms.validateInboundRequest({ callbackKind: "INBOUND_MESSAGE", signature, form }))
-      .resolves.toEqual({ valid: true });
-    await expect(sms.validateInboundRequest({
-      callbackKind: "INBOUND_MESSAGE",
-      signature,
-      form: { ...form, FutureTwilioField: "changed" },
-    })).resolves.toEqual({ valid: false, reason: "INVALID_SIGNATURE" });
-    await expect(sms.validateInboundRequest({ callbackKind: "STATUS_CALLBACK", signature, form }))
-      .resolves.toEqual({ valid: false, reason: "INVALID_SIGNATURE" });
-    await expect(sms.validateInboundRequest({ callbackKind: "INBOUND_MESSAGE", form }))
-      .resolves.toEqual({ valid: false, reason: "MISSING_SIGNATURE" });
+    await expect(sms.validateInboundRequest({ callbackKind: "INBOUND_MESSAGE", signature, form })).resolves.toEqual({
+      valid: true,
+    });
+    await expect(
+      sms.validateInboundRequest({
+        callbackKind: "INBOUND_MESSAGE",
+        signature,
+        form: { ...form, FutureTwilioField: "changed" },
+      }),
+    ).resolves.toEqual({ valid: false, reason: "INVALID_SIGNATURE" });
+    await expect(sms.validateInboundRequest({ callbackKind: "STATUS_CALLBACK", signature, form })).resolves.toEqual({
+      valid: false,
+      reason: "INVALID_SIGNATURE",
+    });
+    await expect(sms.validateInboundRequest({ callbackKind: "INBOUND_MESSAGE", form })).resolves.toEqual({
+      valid: false,
+      reason: "MISSING_SIGNATURE",
+    });
   });
 
   it("parses evolving inbound forms without dropping extras or touching media", async () => {
@@ -101,7 +108,14 @@ describe("messaging adapters", () => {
   it("accepts the legacy SmsSid alias and parses status diagnostics", async () => {
     const inbound = await adapter().parseInboundRequest({
       callbackKind: "INBOUND_MESSAGE",
-      form: { SmsSid: "SMlegacy", AccountSid: accountSid, From: "+13045550101", To: "+13045550100", Body: "Hello", NumMedia: "0" },
+      form: {
+        SmsSid: "SMlegacy",
+        AccountSid: accountSid,
+        From: "+13045550101",
+        To: "+13045550100",
+        Body: "Hello",
+        NumMedia: "0",
+      },
     });
     expect(inbound.providerMessageSid).toBe("SMlegacy");
 
@@ -136,8 +150,10 @@ describe("messaging adapters", () => {
       messagingServiceSid: "MG11111111111111111111111111111111",
       fromNumber: "+13045550100",
     });
-    await expect(sms.sendText({ messageId: "message-1", to: "+13045550101", body: "Calling now." }))
-      .resolves.toEqual({ providerMessageId: "SM222", status: "queued" });
+    await expect(sms.sendText({ messageId: "message-1", to: "+13045550101", body: "Calling now." })).resolves.toEqual({
+      providerMessageId: "SM222",
+      status: "queued",
+    });
     expect(create).toHaveBeenCalledWith({
       to: "+13045550101",
       body: "Calling now.",
@@ -150,8 +166,10 @@ describe("messaging adapters", () => {
     const create = vi.fn().mockResolvedValue({ sid: "SM333", status: null });
     const client: TwilioMessageClient = { messages: { create } };
     const sms = adapter({ client, messagingServiceSid: " " });
-    await expect(sms.sendText({ messageId: "message-2", to: "+13045550101", body: "Update" }))
-      .resolves.toEqual({ providerMessageId: "SM333", status: "accepted" });
+    await expect(sms.sendText({ messageId: "message-2", to: "+13045550101", body: "Update" })).resolves.toEqual({
+      providerMessageId: "SM333",
+      status: "accepted",
+    });
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ from: "+13045550100" }));
     expect(create.mock.calls[0]?.[0]).not.toHaveProperty("messagingServiceSid");
   });

@@ -55,15 +55,13 @@ const statusRank: Readonly<Record<KnownDeliveryStatus, number>> = {
   failed: 93,
 };
 
-const failureStatuses = new Set<string>([
-  "canceled",
-  "partially_delivered",
-  "undelivered",
-  "failed",
-]);
+const failureStatuses = new Set<string>(["canceled", "partially_delivered", "undelivered", "failed"]);
 
 export function normalizeDeliveryStatus(status: string): string {
-  const normalized = status.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const normalized = status
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
   return normalized || "unknown";
 }
 
@@ -73,7 +71,9 @@ export function isDeliveryFailure(status: string): boolean {
 
 export function isTerminalDeliveryStatus(status: string): boolean {
   const normalized = normalizeDeliveryStatus(status);
-  return failureStatuses.has(normalized) || normalized === "delivered" || normalized === "received" || normalized === "read";
+  return (
+    failureStatuses.has(normalized) || normalized === "delivered" || normalized === "received" || normalized === "read"
+  );
 }
 
 function rank(status: string): number {
@@ -93,7 +93,10 @@ function failurePreference(failure: DeliveryFailure): string {
   return `${detailScore}:${rank(failure.status).toString().padStart(3, "0")}:${failure.errorCode ?? ""}:${failure.errorMessage ?? ""}`;
 }
 
-function selectFailure(current: DeliveryFailure | undefined, candidate: DeliveryFailure | undefined): DeliveryFailure | undefined {
+function selectFailure(
+  current: DeliveryFailure | undefined,
+  candidate: DeliveryFailure | undefined,
+): DeliveryFailure | undefined {
   if (!current) return candidate;
   if (!candidate) return current;
   const currentPreference = failurePreference(current);

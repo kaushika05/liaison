@@ -63,13 +63,7 @@ export function autonomyPreset(mode: AutonomyMode): Readonly<AutonomyPreset> {
   return AUTONOMY_PRESETS[autonomyModeSchema.parse(mode)];
 }
 
-export const attentionTierSchema = z.enum([
-  "INFORMATIONAL",
-  "LOW_CONSEQUENCE",
-  "SENSITIVE",
-  "MATERIAL",
-  "PROHIBITED",
-]);
+export const attentionTierSchema = z.enum(["INFORMATIONAL", "LOW_CONSEQUENCE", "SENSITIVE", "MATERIAL", "PROHIBITED"]);
 export type AttentionTier = z.infer<typeof attentionTierSchema>;
 
 export const attentionStatusSchema = z.enum([
@@ -85,7 +79,11 @@ export type AttentionStatus = z.infer<typeof attentionStatusSchema>;
 
 export const attentionChoiceSchema = z.object({
   id: z.string().trim().min(1).max(120),
-  shortCode: z.string().trim().toUpperCase().regex(/^[A-C]$/, "Choice code must be A, B, or C."),
+  shortCode: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-C]$/, "Choice code must be A, B, or C."),
   label: z.string().trim().min(1).max(160),
   effect: z.string().trim().min(1).max(500),
 });
@@ -93,47 +91,57 @@ export type AttentionChoice = z.infer<typeof attentionChoiceSchema>;
 
 const isoDateTimeSchema = z.string().datetime({ offset: true });
 
-export const attentionRequestSchema = z.object({
-  protocolVersion: protocolVersionSchema.default(1),
-  id: z.string().trim().min(1).max(120),
-  caseId: z.string().trim().min(1).max(120),
-  callId: z.string().trim().min(1).max(120),
-  tier: attentionTierSchema,
-  status: attentionStatusSchema,
-  title: z.string().trim().min(1).max(200),
-  representativeRequest: z.string().trim().min(1).max(1_000),
-  currentGoal: z.string().trim().min(1).max(1_000),
-  proposedAction: z.string().trim().min(1).max(1_000),
-  consequences: z.string().trim().min(1).max(1_000),
-  choices: z.array(attentionChoiceSchema).max(3),
-  amountCents: z.number().int().min(0).optional(),
-  disclosureCardId: z.string().trim().min(1).max(120).optional(),
-  createdAt: isoDateTimeSchema,
-  expiresAt: isoDateTimeSchema,
-  resolvedAt: isoDateTimeSchema.optional(),
-  resolutionChannel: z.enum(["SMS", "WEB"]).optional(),
-  resolutionMessageId: z.string().trim().min(1).max(120).optional(),
-}).superRefine((request, context) => {
-  const codes = request.choices.map((choice) => choice.shortCode);
-  if (new Set(codes).size !== codes.length) {
-    context.addIssue({ code: "custom", path: ["choices"], message: "Choice codes must be unambiguous." });
-  }
-  if (request.status === "PENDING" && request.tier === "LOW_CONSEQUENCE" && request.choices.length < 2) {
-    context.addIssue({ code: "custom", path: ["choices"], message: "A pending low-consequence request needs at least two choices." });
-  }
-  if (request.tier === "INFORMATIONAL" && request.choices.length > 0) {
-    context.addIssue({ code: "custom", path: ["choices"], message: "Informational updates do not accept choices." });
-  }
-  if (request.tier === "PROHIBITED" && request.status === "APPROVED") {
-    context.addIssue({ code: "custom", path: ["status"], message: "A prohibited action cannot be approved." });
-  }
-  if (request.resolutionChannel === "SMS" && request.tier !== "LOW_CONSEQUENCE") {
-    context.addIssue({ code: "custom", path: ["resolutionChannel"], message: "Only low-consequence requests may be resolved by SMS." });
-  }
-  if (Date.parse(request.expiresAt) <= Date.parse(request.createdAt)) {
-    context.addIssue({ code: "custom", path: ["expiresAt"], message: "Expiration must be after creation." });
-  }
-});
+export const attentionRequestSchema = z
+  .object({
+    protocolVersion: protocolVersionSchema.default(1),
+    id: z.string().trim().min(1).max(120),
+    caseId: z.string().trim().min(1).max(120),
+    callId: z.string().trim().min(1).max(120),
+    tier: attentionTierSchema,
+    status: attentionStatusSchema,
+    title: z.string().trim().min(1).max(200),
+    representativeRequest: z.string().trim().min(1).max(1_000),
+    currentGoal: z.string().trim().min(1).max(1_000),
+    proposedAction: z.string().trim().min(1).max(1_000),
+    consequences: z.string().trim().min(1).max(1_000),
+    choices: z.array(attentionChoiceSchema).max(3),
+    amountCents: z.number().int().min(0).optional(),
+    disclosureCardId: z.string().trim().min(1).max(120).optional(),
+    createdAt: isoDateTimeSchema,
+    expiresAt: isoDateTimeSchema,
+    resolvedAt: isoDateTimeSchema.optional(),
+    resolutionChannel: z.enum(["SMS", "WEB"]).optional(),
+    resolutionMessageId: z.string().trim().min(1).max(120).optional(),
+  })
+  .superRefine((request, context) => {
+    const codes = request.choices.map((choice) => choice.shortCode);
+    if (new Set(codes).size !== codes.length) {
+      context.addIssue({ code: "custom", path: ["choices"], message: "Choice codes must be unambiguous." });
+    }
+    if (request.status === "PENDING" && request.tier === "LOW_CONSEQUENCE" && request.choices.length < 2) {
+      context.addIssue({
+        code: "custom",
+        path: ["choices"],
+        message: "A pending low-consequence request needs at least two choices.",
+      });
+    }
+    if (request.tier === "INFORMATIONAL" && request.choices.length > 0) {
+      context.addIssue({ code: "custom", path: ["choices"], message: "Informational updates do not accept choices." });
+    }
+    if (request.tier === "PROHIBITED" && request.status === "APPROVED") {
+      context.addIssue({ code: "custom", path: ["status"], message: "A prohibited action cannot be approved." });
+    }
+    if (request.resolutionChannel === "SMS" && request.tier !== "LOW_CONSEQUENCE") {
+      context.addIssue({
+        code: "custom",
+        path: ["resolutionChannel"],
+        message: "Only low-consequence requests may be resolved by SMS.",
+      });
+    }
+    if (Date.parse(request.expiresAt) <= Date.parse(request.createdAt)) {
+      context.addIssue({ code: "custom", path: ["expiresAt"], message: "Expiration must be after creation." });
+    }
+  });
 export type AttentionRequest = z.infer<typeof attentionRequestSchema>;
 
 export const attentionActionSchema = z.enum([
@@ -208,16 +216,15 @@ export function isSmsResolvableTier(tier: AttentionTier): boolean {
   return attentionTierSchema.parse(tier) === "LOW_CONSEQUENCE";
 }
 
-export function isSmsEligibleAttentionRequest(
-  request: AttentionRequest,
-  now: Date = new Date(),
-): boolean {
+export function isSmsEligibleAttentionRequest(request: AttentionRequest, now: Date = new Date()): boolean {
   const parsed = attentionRequestSchema.safeParse(request);
-  return parsed.success
-    && parsed.data.status === "PENDING"
-    && isSmsResolvableTier(parsed.data.tier)
-    && parsed.data.choices.length >= 2
-    && Date.parse(parsed.data.expiresAt) > now.getTime();
+  return (
+    parsed.success &&
+    parsed.data.status === "PENDING" &&
+    isSmsResolvableTier(parsed.data.tier) &&
+    parsed.data.choices.length >= 2 &&
+    Date.parse(parsed.data.expiresAt) > now.getTime()
+  );
 }
 
 export const supportThreadStateSchema = z.enum([
@@ -279,30 +286,40 @@ export type ConditionalAuthorityComparison = z.infer<typeof conditionalAuthority
 
 const monetarySubjects = new Set<ConditionalAuthoritySubject>(["REFUND", "CREDIT", "FEE", "CHARGE"]);
 
-export const conditionalAuthorityRuleSchema = z.object({
-  id: z.string().trim().min(1).max(120),
-  subject: conditionalAuthoritySubjectSchema,
-  comparison: conditionalAuthorityComparisonSchema.optional(),
-  amountCents: z.number().int().min(0).max(100_000_000).optional(),
-  decision: permissionLevelSchema,
-}).superRefine((rule, context) => {
-  const monetary = monetarySubjects.has(rule.subject);
-  if (monetary && rule.comparison === undefined) {
-    context.addIssue({ code: "custom", path: ["comparison"], message: "A monetary rule requires a comparison." });
-  }
-  if (monetary && rule.comparison !== undefined && rule.comparison !== "ANY" && rule.amountCents === undefined) {
-    context.addIssue({ code: "custom", path: ["amountCents"], message: "This monetary comparison requires an amount." });
-  }
-  if (rule.comparison === "ANY" && rule.amountCents !== undefined) {
-    context.addIssue({ code: "custom", path: ["amountCents"], message: "An ANY rule cannot include an amount." });
-  }
-  if (!monetary && rule.amountCents !== undefined) {
-    context.addIssue({ code: "custom", path: ["amountCents"], message: "A non-monetary rule cannot include an amount." });
-  }
-  if (!monetary && rule.comparison !== undefined && rule.comparison !== "ANY") {
-    context.addIssue({ code: "custom", path: ["comparison"], message: "A non-monetary rule may use only ANY." });
-  }
-});
+export const conditionalAuthorityRuleSchema = z
+  .object({
+    id: z.string().trim().min(1).max(120),
+    subject: conditionalAuthoritySubjectSchema,
+    comparison: conditionalAuthorityComparisonSchema.optional(),
+    amountCents: z.number().int().min(0).max(100_000_000).optional(),
+    decision: permissionLevelSchema,
+  })
+  .superRefine((rule, context) => {
+    const monetary = monetarySubjects.has(rule.subject);
+    if (monetary && rule.comparison === undefined) {
+      context.addIssue({ code: "custom", path: ["comparison"], message: "A monetary rule requires a comparison." });
+    }
+    if (monetary && rule.comparison !== undefined && rule.comparison !== "ANY" && rule.amountCents === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["amountCents"],
+        message: "This monetary comparison requires an amount.",
+      });
+    }
+    if (rule.comparison === "ANY" && rule.amountCents !== undefined) {
+      context.addIssue({ code: "custom", path: ["amountCents"], message: "An ANY rule cannot include an amount." });
+    }
+    if (!monetary && rule.amountCents !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["amountCents"],
+        message: "A non-monetary rule cannot include an amount.",
+      });
+    }
+    if (!monetary && rule.comparison !== undefined && rule.comparison !== "ANY") {
+      context.addIssue({ code: "custom", path: ["comparison"], message: "A non-monetary rule may use only ANY." });
+    }
+  });
 export type ConditionalAuthorityRule = z.infer<typeof conditionalAuthorityRuleSchema>;
 
 export interface ConditionalAuthorityConflict {
@@ -320,9 +337,7 @@ function crossingThresholds(first: ConditionalAuthorityRule, second: Conditional
   const secondComparison = comparisonOf(second);
   const lower = firstComparison === "AT_LEAST" ? first : secondComparison === "AT_LEAST" ? second : undefined;
   const upper = firstComparison === "AT_MOST" ? first : secondComparison === "AT_MOST" ? second : undefined;
-  return lower?.amountCents !== undefined
-    && upper?.amountCents !== undefined
-    && lower.amountCents <= upper.amountCents;
+  return lower?.amountCents !== undefined && upper?.amountCents !== undefined && lower.amountCents <= upper.amountCents;
 }
 
 /**
@@ -355,14 +370,17 @@ export function findConditionalAuthorityConflicts(
   return conflicts;
 }
 
-export const conditionalAuthorityRulesSchema = z.array(conditionalAuthorityRuleSchema).max(50).superRefine((rules, context) => {
-  for (const conflict of findConditionalAuthorityConflicts(rules)) {
-    context.addIssue({
-      code: "custom",
-      message: `Conflicting conditional authority rules: ${conflict.firstRuleId}, ${conflict.secondRuleId} (${conflict.reason}).`,
-    });
-  }
-});
+export const conditionalAuthorityRulesSchema = z
+  .array(conditionalAuthorityRuleSchema)
+  .max(50)
+  .superRefine((rules, context) => {
+    for (const conflict of findConditionalAuthorityConflicts(rules)) {
+      context.addIssue({
+        code: "custom",
+        message: `Conflicting conditional authority rules: ${conflict.firstRuleId}, ${conflict.secondRuleId} (${conflict.reason}).`,
+      });
+    }
+  });
 
 export type ConditionalAuthorityEvaluation =
   | { source: "HARD_POLICY"; decision: "DENY"; matchedRuleIds: [] }
@@ -406,7 +424,9 @@ export function evaluateConditionalAuthority(
     return {
       source: "CONFLICT",
       decision: null,
-      matchedRuleIds: [...new Set(conflicts.flatMap((conflict) => [conflict.firstRuleId, conflict.secondRuleId]))].sort(),
+      matchedRuleIds: [
+        ...new Set(conflicts.flatMap((conflict) => [conflict.firstRuleId, conflict.secondRuleId])),
+      ].sort(),
       conflicts,
     };
   }
@@ -428,22 +448,28 @@ export type CommitmentParty = z.infer<typeof commitmentPartySchema>;
 export const commitmentStatusSchema = z.enum(["PROPOSED", "CONFIRMED", "REJECTED", "SUPERSEDED", "UNVERIFIED"]);
 export type CommitmentStatus = z.infer<typeof commitmentStatusSchema>;
 
-export const commitmentSchema = z.object({
-  protocolVersion: protocolVersionSchema.default(1),
-  id: z.string().trim().min(1).max(120),
-  party: commitmentPartySchema,
-  status: commitmentStatusSchema,
-  description: z.string().trim().min(1).max(1_000),
-  amountCents: z.number().int().min(0).optional(),
-  deadline: z.string().trim().min(1).max(200).optional(),
-  recurring: z.boolean().optional(),
-  evidence: z.array(evidenceReferenceSchema).max(20),
-  createdAt: isoDateTimeSchema,
-}).superRefine((commitment, context) => {
-  if (commitment.status === "CONFIRMED" && commitment.evidence.length === 0) {
-    context.addIssue({ code: "custom", path: ["evidence"], message: "A confirmed commitment requires transcript evidence." });
-  }
-});
+export const commitmentSchema = z
+  .object({
+    protocolVersion: protocolVersionSchema.default(1),
+    id: z.string().trim().min(1).max(120),
+    party: commitmentPartySchema,
+    status: commitmentStatusSchema,
+    description: z.string().trim().min(1).max(1_000),
+    amountCents: z.number().int().min(0).optional(),
+    deadline: z.string().trim().min(1).max(200).optional(),
+    recurring: z.boolean().optional(),
+    evidence: z.array(evidenceReferenceSchema).max(20),
+    createdAt: isoDateTimeSchema,
+  })
+  .superRefine((commitment, context) => {
+    if (commitment.status === "CONFIRMED" && commitment.evidence.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["evidence"],
+        message: "A confirmed commitment requires transcript evidence.",
+      });
+    }
+  });
 export type Commitment = z.infer<typeof commitmentSchema>;
 
 export const semanticCallEventSchema = z.discriminatedUnion("kind", [
@@ -452,8 +478,16 @@ export const semanticCallEventSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("ON_HOLD"), startedAt: isoDateTimeSchema }),
   z.object({ kind: z.literal("TRANSFER_STARTED"), destination: z.string().trim().min(1).max(200).optional() }),
   z.object({ kind: z.literal("AUTHENTICATION_REQUESTED"), category: z.string().trim().min(1).max(200) }),
-  z.object({ kind: z.literal("FACT_CONFIRMED"), fact: z.string().trim().min(1).max(1_000), evidence: z.array(evidenceReferenceSchema).min(1).max(20) }),
-  z.object({ kind: z.literal("OFFER_MADE"), description: z.string().trim().min(1).max(1_000), amountCents: z.number().int().optional() }),
+  z.object({
+    kind: z.literal("FACT_CONFIRMED"),
+    fact: z.string().trim().min(1).max(1_000),
+    evidence: z.array(evidenceReferenceSchema).min(1).max(20),
+  }),
+  z.object({
+    kind: z.literal("OFFER_MADE"),
+    description: z.string().trim().min(1).max(1_000),
+    amountCents: z.number().int().optional(),
+  }),
   z.object({ kind: z.literal("COMMITMENT_CONFIRMED"), commitmentId: z.string().trim().min(1).max(120) }),
   z.object({ kind: z.literal("CASE_NUMBER_RECEIVED"), evidence: z.array(evidenceReferenceSchema).min(1).max(20) }),
   z.object({ kind: z.literal("DEADLINE_RECEIVED"), evidence: z.array(evidenceReferenceSchema).min(1).max(20) }),
@@ -477,33 +511,47 @@ function normalizedEvidence(event: Extract<SemanticCallEvent, { evidence: unknow
 export function semanticCallEventDedupKey(eventInput: SemanticCallEvent): string {
   const event = semanticCallEventSchema.parse(eventInput);
   switch (event.kind) {
-    case "DEPARTMENT_REACHED": return `${event.kind}:${normalizedText(event.department)}`;
-    case "HUMAN_REACHED": return event.kind;
-    case "ON_HOLD": return `${event.kind}:${event.startedAt}`;
-    case "TRANSFER_STARTED": return `${event.kind}:${normalizedText(event.destination)}`;
-    case "AUTHENTICATION_REQUESTED": return `${event.kind}:${normalizedText(event.category)}`;
-    case "FACT_CONFIRMED": return `${event.kind}:${normalizedText(event.fact)}`;
-    case "OFFER_MADE": return `${event.kind}:${normalizedText(event.description)}:${event.amountCents ?? ""}`;
-    case "COMMITMENT_CONFIRMED": return `${event.kind}:${event.commitmentId}`;
-    case "CASE_NUMBER_RECEIVED": return `${event.kind}:${normalizedEvidence(event)}`;
-    case "DEADLINE_RECEIVED": return `${event.kind}:${normalizedEvidence(event)}`;
-    case "RESOLUTION_VERIFIED": return event.kind;
-    case "CALL_DISCONNECTED": return event.kind;
+    case "DEPARTMENT_REACHED":
+      return `${event.kind}:${normalizedText(event.department)}`;
+    case "HUMAN_REACHED":
+      return event.kind;
+    case "ON_HOLD":
+      return `${event.kind}:${event.startedAt}`;
+    case "TRANSFER_STARTED":
+      return `${event.kind}:${normalizedText(event.destination)}`;
+    case "AUTHENTICATION_REQUESTED":
+      return `${event.kind}:${normalizedText(event.category)}`;
+    case "FACT_CONFIRMED":
+      return `${event.kind}:${normalizedText(event.fact)}`;
+    case "OFFER_MADE":
+      return `${event.kind}:${normalizedText(event.description)}:${event.amountCents ?? ""}`;
+    case "COMMITMENT_CONFIRMED":
+      return `${event.kind}:${event.commitmentId}`;
+    case "CASE_NUMBER_RECEIVED":
+      return `${event.kind}:${normalizedEvidence(event)}`;
+    case "DEADLINE_RECEIVED":
+      return `${event.kind}:${normalizedEvidence(event)}`;
+    case "RESOLUTION_VERIFIED":
+      return event.kind;
+    case "CALL_DISCONNECTED":
+      return event.kind;
   }
 }
 
-export const disclosureEventSchema = z.object({
-  protocolVersion: protocolVersionSchema.default(1),
-  id: z.string().trim().min(1).max(120),
-  caseId: z.string().trim().min(1).max(120),
-  callId: z.string().trim().min(1).max(120),
-  disclosureCardId: z.string().trim().min(1).max(120),
-  category: disclosureCategorySchema,
-  channel: z.enum(["SPEECH", "DTMF"]),
-  purpose: z.string().trim().min(1).max(180),
-  consentRecorded: z.literal(true),
-  occurredAt: isoDateTimeSchema,
-}).describe("Metadata-only disclosure event. The disclosed value is deliberately excluded.");
+export const disclosureEventSchema = z
+  .object({
+    protocolVersion: protocolVersionSchema.default(1),
+    id: z.string().trim().min(1).max(120),
+    caseId: z.string().trim().min(1).max(120),
+    callId: z.string().trim().min(1).max(120),
+    disclosureCardId: z.string().trim().min(1).max(120),
+    category: disclosureCategorySchema,
+    channel: z.enum(["SPEECH", "DTMF"]),
+    purpose: z.string().trim().min(1).max(180),
+    consentRecorded: z.literal(true),
+    occurredAt: isoDateTimeSchema,
+  })
+  .describe("Metadata-only disclosure event. The disclosed value is deliberately excluded.");
 export type DisclosureEvent = z.infer<typeof disclosureEventSchema>;
 
 export const supportIntentSchema = z.object({
@@ -523,32 +571,46 @@ export const supportIntentSchema = z.object({
 });
 export type SupportIntent = z.infer<typeof supportIntentSchema>;
 
-export const executionPlanSchema = z.object({
-  protocolVersion: protocolVersionSchema.default(1),
-  planId: z.string().trim().min(1).max(120),
-  caseId: z.string().trim().min(1).max(120),
-  version: z.number().int().positive(),
-  intent: supportIntentSchema,
-  callBrief: callBriefSchema,
-  authority: authorityEnvelopeSchema,
-  autonomyMode: autonomyModeSchema,
-  conditionalAuthorityRules: conditionalAuthorityRulesSchema.default([]),
-  createdAt: isoDateTimeSchema,
-  approvedAt: isoDateTimeSchema.optional(),
-}).superRefine((plan, context) => {
-  if (plan.version !== plan.callBrief.version) {
-    context.addIssue({ code: "custom", path: ["version"], message: "Plan version must match the wrapped call brief." });
-  }
-  if (plan.caseId !== plan.intent.caseId || plan.caseId !== plan.callBrief.id) {
-    context.addIssue({ code: "custom", path: ["caseId"], message: "Case identifiers must match across the plan." });
-  }
-  if (plan.autonomyMode !== plan.intent.autonomyMode) {
-    context.addIssue({ code: "custom", path: ["autonomyMode"], message: "Autonomy mode must match the support intent." });
-  }
-  if (JSON.stringify(plan.authority) !== JSON.stringify(plan.callBrief.authority)) {
-    context.addIssue({ code: "custom", path: ["authority"], message: "Authority must match the wrapped call brief." });
-  }
-});
+export const executionPlanSchema = z
+  .object({
+    protocolVersion: protocolVersionSchema.default(1),
+    planId: z.string().trim().min(1).max(120),
+    caseId: z.string().trim().min(1).max(120),
+    version: z.number().int().positive(),
+    intent: supportIntentSchema,
+    callBrief: callBriefSchema,
+    authority: authorityEnvelopeSchema,
+    autonomyMode: autonomyModeSchema,
+    conditionalAuthorityRules: conditionalAuthorityRulesSchema.default([]),
+    createdAt: isoDateTimeSchema,
+    approvedAt: isoDateTimeSchema.optional(),
+  })
+  .superRefine((plan, context) => {
+    if (plan.version !== plan.callBrief.version) {
+      context.addIssue({
+        code: "custom",
+        path: ["version"],
+        message: "Plan version must match the wrapped call brief.",
+      });
+    }
+    if (plan.caseId !== plan.intent.caseId || plan.caseId !== plan.callBrief.id) {
+      context.addIssue({ code: "custom", path: ["caseId"], message: "Case identifiers must match across the plan." });
+    }
+    if (plan.autonomyMode !== plan.intent.autonomyMode) {
+      context.addIssue({
+        code: "custom",
+        path: ["autonomyMode"],
+        message: "Autonomy mode must match the support intent.",
+      });
+    }
+    if (JSON.stringify(plan.authority) !== JSON.stringify(plan.callBrief.authority)) {
+      context.addIssue({
+        code: "custom",
+        path: ["authority"],
+        message: "Authority must match the wrapped call brief.",
+      });
+    }
+  });
 export type ExecutionPlan = z.infer<typeof executionPlanSchema>;
 
 export function supportIntentFromCallBrief(
@@ -601,9 +663,5 @@ export function executionPlanFromCallBrief(
 }
 
 // Re-export the canonical existing protocol components for one import surface.
-export {
-  authorityEnvelopeSchema,
-  evidenceReferenceSchema,
-  outcomeReportSchema,
-};
+export { authorityEnvelopeSchema, evidenceReferenceSchema, outcomeReportSchema };
 export type { AuthorityEnvelope };

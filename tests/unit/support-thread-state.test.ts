@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { supportThreadStateSchema, type SupportThreadState } from "../../src/shared/protocol.js";
-import {
-  canTransitionSupportThread,
-  transitionSupportThreadState,
-} from "../../src/shared/support-thread-state.js";
+import { canTransitionSupportThread, transitionSupportThreadState } from "../../src/shared/support-thread-state.js";
 
 const expected: Readonly<Record<SupportThreadState, readonly SupportThreadState[]>> = {
   IDLE: ["COLLECTING_ISSUE"],
@@ -41,12 +38,9 @@ describe("support thread state machine", () => {
     }
   });
 
-  it.each(["COMPLETED", "CANCELLED", "FAILED"] satisfies SupportThreadState[])(
-    "%s is terminal",
-    (state) => {
-      for (const next of supportThreadStateSchema.options) {
-        expect(canTransitionSupportThread(state, next)).toBe(false);
-      }
-    },
-  );
+  it.each(["COMPLETED", "CANCELLED", "FAILED"] satisfies SupportThreadState[])("%s is terminal", (state) => {
+    for (const next of supportThreadStateSchema.options) {
+      expect(canTransitionSupportThread(state, next)).toBe(false);
+    }
+  });
 });

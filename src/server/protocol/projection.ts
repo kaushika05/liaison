@@ -1,5 +1,10 @@
 import type { CaseDetail } from "../../shared/api.js";
-import type { AttentionRequestRecord, CommitmentRecord, ConditionalAuthorityRuleRecord, SupportThreadRecord } from "../database/db.js";
+import type {
+  AttentionRequestRecord,
+  CommitmentRecord,
+  ConditionalAuthorityRuleRecord,
+  SupportThreadRecord,
+} from "../database/db.js";
 import {
   attentionRequestSchema,
   commitmentSchema,
@@ -28,7 +33,7 @@ export function executionPlanId(caseId: string, planVersion: number): string {
 }
 
 function planObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 export function projectExecutionPlan(input: {
@@ -67,7 +72,10 @@ function protocolAttentionStatus(record: AttentionRequestRecord): AttentionStatu
 }
 
 function attentionTitle(question: string, tier: AttentionRequestRecord["tier"]): string {
-  const firstLine = question.split("\n").map((line) => line.trim()).find(Boolean);
+  const firstLine = question
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
   return (firstLine ?? `${tier} decision`).slice(0, 200);
 }
 

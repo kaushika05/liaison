@@ -58,10 +58,16 @@ describe("Twilio delivery reducer", () => {
   });
 
   it("handles future statuses without allowing them to regress known progress", () => {
-    const future = reduceMessageDelivery(undefined, { status: "carrier_acknowledged", observedAt: "2026-08-12T12:00:00.000Z" });
+    const future = reduceMessageDelivery(undefined, {
+      status: "carrier_acknowledged",
+      observedAt: "2026-08-12T12:00:00.000Z",
+    });
     expect(future.status).toBe("carrier_acknowledged");
     const sent = reduceMessageDelivery(future, { status: "sent", observedAt: "2026-08-12T12:00:01.000Z" });
-    const futureLate = reduceMessageDelivery(sent, { status: "carrier_acknowledged", observedAt: "2026-08-12T12:00:02.000Z" });
+    const futureLate = reduceMessageDelivery(sent, {
+      status: "carrier_acknowledged",
+      observedAt: "2026-08-12T12:00:02.000Z",
+    });
     expect(futureLate.status).toBe("sent");
   });
 });

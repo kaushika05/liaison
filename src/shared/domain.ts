@@ -63,7 +63,14 @@ export const callBriefSchema = z.object({
 export type CallBrief = z.infer<typeof callBriefSchema>;
 
 export const disclosureCategorySchema = z.enum([
-  "ACCOUNT_NUMBER", "ORDER_NUMBER", "ADDRESS", "DATE_OF_BIRTH", "EMAIL", "PHONE", "ZIP_CODE", "OTHER_ALLOWED",
+  "ACCOUNT_NUMBER",
+  "ORDER_NUMBER",
+  "ADDRESS",
+  "DATE_OF_BIRTH",
+  "EMAIL",
+  "PHONE",
+  "ZIP_CODE",
+  "OTHER_ALLOWED",
 ]);
 export const disclosureCardMetadataSchema = z.object({
   id: z.string().min(1),
@@ -80,21 +87,39 @@ export const intakeDisclosureSchema = disclosureCardMetadataSchema.omit({ id: tr
   value: z.string().min(1).max(300),
 });
 
-export const secureDisclosureInputSchema = z.object({
-  category: z.enum(["ACCOUNT_NUMBER", "ORDER_NUMBER", "ADDRESS", "DATE_OF_BIRTH"]),
-  value: z.string().trim().min(1).max(300),
-  allowedChannels: z.array(z.enum(["SPEECH", "DTMF"])).min(1).max(2),
-}).strict().superRefine((input, context) => {
-  if (new Set(input.allowedChannels).size !== input.allowedChannels.length) {
-    context.addIssue({ code: "custom", path: ["allowedChannels"], message: "Choose each delivery channel at most once." });
-  }
-  if (input.category === "ADDRESS" && (input.allowedChannels.length !== 1 || input.allowedChannels[0] !== "SPEECH")) {
-    context.addIssue({ code: "custom", path: ["allowedChannels"], message: "An address can only be delivered by speech." });
-  }
-  if (input.allowedChannels.includes("DTMF") && (!/^[0-9w#*]+$/.test(input.value) || input.value.length > 64)) {
-    context.addIssue({ code: "custom", path: ["value"], message: "DTMF values may contain only digits, w, #, or *, up to 64 characters." });
-  }
-});
+export const secureDisclosureInputSchema = z
+  .object({
+    category: z.enum(["ACCOUNT_NUMBER", "ORDER_NUMBER", "ADDRESS", "DATE_OF_BIRTH"]),
+    value: z.string().trim().min(1).max(300),
+    allowedChannels: z
+      .array(z.enum(["SPEECH", "DTMF"]))
+      .min(1)
+      .max(2),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (new Set(input.allowedChannels).size !== input.allowedChannels.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["allowedChannels"],
+        message: "Choose each delivery channel at most once.",
+      });
+    }
+    if (input.category === "ADDRESS" && (input.allowedChannels.length !== 1 || input.allowedChannels[0] !== "SPEECH")) {
+      context.addIssue({
+        code: "custom",
+        path: ["allowedChannels"],
+        message: "An address can only be delivered by speech.",
+      });
+    }
+    if (input.allowedChannels.includes("DTMF") && (!/^[0-9w#*]+$/.test(input.value) || input.value.length > 64)) {
+      context.addIssue({
+        code: "custom",
+        path: ["value"],
+        message: "DTMF values may contain only digits, w, #, or *, up to 64 characters.",
+      });
+    }
+  });
 export type SecureDisclosureInput = z.infer<typeof secureDisclosureInputSchema>;
 
 export const caseIntakeSchema = z.object({
@@ -116,8 +141,21 @@ export const caseIntakeSchema = z.object({
 export type CaseIntake = z.infer<typeof caseIntakeSchema>;
 
 export const callStateSchema = z.enum([
-  "PREPARING", "DIALING", "CONNECTED", "IVR", "ON_HOLD", "WAITING_FOR_REPRESENTATIVE", "DISCLOSING_ASSISTANT",
-  "EXPLAINING_ISSUE", "AUTHENTICATING", "NEGOTIATING", "NEEDS_USER", "VERIFYING_OUTCOME", "ENDING", "COMPLETED", "FAILED",
+  "PREPARING",
+  "DIALING",
+  "CONNECTED",
+  "IVR",
+  "ON_HOLD",
+  "WAITING_FOR_REPRESENTATIVE",
+  "DISCLOSING_ASSISTANT",
+  "EXPLAINING_ISSUE",
+  "AUTHENTICATING",
+  "NEGOTIATING",
+  "NEEDS_USER",
+  "VERIFYING_OUTCOME",
+  "ENDING",
+  "COMPLETED",
+  "FAILED",
 ]);
 export type CallState = z.infer<typeof callStateSchema>;
 
@@ -127,13 +165,36 @@ export const capturedFactSchema = z.object({
   turnId: z.string(),
 });
 
-const baseDecision = { policyReasonCode: z.string().regex(/^[A-Z0-9_]{2,64}$/), capturedFacts: z.array(capturedFactSchema).max(10) };
-export const approvalCategorySchema = z.enum(["PERSONAL_DATA", "FINANCIAL", "ACCOUNT_CHANGE", "CANCELLATION", "SCHEDULING", "ALTERNATIVE_OUTCOME", "END_UNRESOLVED"]);
+const baseDecision = {
+  policyReasonCode: z.string().regex(/^[A-Z0-9_]{2,64}$/),
+  capturedFacts: z.array(capturedFactSchema).max(10),
+};
+export const approvalCategorySchema = z.enum([
+  "PERSONAL_DATA",
+  "FINANCIAL",
+  "ACCOUNT_CHANGE",
+  "CANCELLATION",
+  "SCHEDULING",
+  "ALTERNATIVE_OUTCOME",
+  "END_UNRESOLVED",
+]);
 export const agentDecisionSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("SPEAK"), text: z.string().trim().min(1).max(400), nextState: callStateSchema, ...baseDecision }),
-  z.object({ action: z.literal("SEND_DIGITS"), digits: z.string().regex(/^[0-9w#*]{1,64}$/), nextState: callStateSchema, ...baseDecision }),
   z.object({
-    action: z.literal("REQUEST_APPROVAL"), nextState: z.literal("NEEDS_USER"), ...baseDecision,
+    action: z.literal("SPEAK"),
+    text: z.string().trim().min(1).max(400),
+    nextState: callStateSchema,
+    ...baseDecision,
+  }),
+  z.object({
+    action: z.literal("SEND_DIGITS"),
+    digits: z.string().regex(/^[0-9w#*]{1,64}$/),
+    nextState: callStateSchema,
+    ...baseDecision,
+  }),
+  z.object({
+    action: z.literal("REQUEST_APPROVAL"),
+    nextState: z.literal("NEEDS_USER"),
+    ...baseDecision,
     approval: z.object({
       category: approvalCategorySchema,
       question: z.string().min(1).max(500),
@@ -145,26 +206,60 @@ export const agentDecisionSchema = z.discriminatedUnion("action", [
       executionChannel: z.enum(["SPEECH", "DTMF"]).optional(),
     }),
   }),
-  z.object({ action: z.literal("WAIT"), reason: z.enum(["HOLD", "SILENCE", "TRANSFER", "REPRESENTATIVE_WORKING", "USER_PAUSED"]), nextState: callStateSchema, ...baseDecision }),
+  z.object({
+    action: z.literal("WAIT"),
+    reason: z.enum(["HOLD", "SILENCE", "TRANSFER", "REPRESENTATIVE_WORKING", "USER_PAUSED"]),
+    nextState: callStateSchema,
+    ...baseDecision,
+  }),
   z.object({
     action: z.literal("END_CALL"),
-    reason: z.enum(["RESOLVED", "PARTIALLY_RESOLVED", "UNRESOLVED", "REPRESENTATIVE_REFUSED_AUTOMATION", "AUTHENTICATION_REQUIRED", "USER_REQUESTED", "TECHNICAL_FAILURE", "POLICY_BLOCKED"]),
-    proposedOutcomeStatus: z.enum(["RESOLVED", "PARTIAL", "UNRESOLVED", "REFUSED_AUTOMATION", "AUTHENTICATION_REQUIRED", "TECHNICAL_FAILURE"]),
-    closingText: z.string().max(400).optional(), nextState: z.literal("ENDING"), ...baseDecision,
+    reason: z.enum([
+      "RESOLVED",
+      "PARTIALLY_RESOLVED",
+      "UNRESOLVED",
+      "REPRESENTATIVE_REFUSED_AUTOMATION",
+      "AUTHENTICATION_REQUIRED",
+      "USER_REQUESTED",
+      "TECHNICAL_FAILURE",
+      "POLICY_BLOCKED",
+    ]),
+    proposedOutcomeStatus: z.enum([
+      "RESOLVED",
+      "PARTIAL",
+      "UNRESOLVED",
+      "REFUSED_AUTOMATION",
+      "AUTHENTICATION_REQUIRED",
+      "TECHNICAL_FAILURE",
+    ]),
+    closingText: z.string().max(400).optional(),
+    nextState: z.literal("ENDING"),
+    ...baseDecision,
   }),
 ]);
 export type AgentDecision = z.infer<typeof agentDecisionSchema>;
 
 export const evidenceReferenceSchema = z.object({ turnId: z.string(), exactQuote: z.string().min(1).max(1_000) });
-const grounded = <T extends z.ZodType>(value: T) => z.object({ value, evidence: z.array(evidenceReferenceSchema).min(1) });
+const grounded = <T extends z.ZodType>(value: T) =>
+  z.object({ value, evidence: z.array(evidenceReferenceSchema).min(1) });
 export const outcomeReportSchema = z.object({
-  status: z.enum(["RESOLVED", "PARTIAL", "UNRESOLVED", "REFUSED_AUTOMATION", "AUTHENTICATION_REQUIRED", "DISCONNECTED", "TECHNICAL_FAILURE"]),
+  status: z.enum([
+    "RESOLVED",
+    "PARTIAL",
+    "UNRESOLVED",
+    "REFUSED_AUTOMATION",
+    "AUTHENTICATION_REQUIRED",
+    "DISCONNECTED",
+    "TECHNICAL_FAILURE",
+  ]),
   summary: grounded(z.string()).nullable(),
   representativeName: grounded(z.string()).nullable(),
   department: grounded(z.string()).nullable(),
   caseNumber: grounded(z.string()).nullable(),
   resolution: grounded(z.string()).nullable(),
-  monetaryOutcomes: z.array(grounded(z.object({ kind: z.enum(["REFUND", "CREDIT", "FEE", "CHARGE", "OTHER"]), amountCents: z.number().int() }))),
+  monetaryOutcomes: z.array(
+    grounded(z.object({ kind: z.enum(["REFUND", "CREDIT", "FEE", "CHARGE", "OTHER"]), amountCents: z.number().int() })),
+  ),
   companyCommitments: z.array(grounded(z.string())),
   userActions: z.array(grounded(z.string())),
   deadlines: z.array(grounded(z.string())),
@@ -172,31 +267,80 @@ export const outcomeReportSchema = z.object({
   endedAt: z.string(),
   durationSeconds: z.number().int().min(0),
   estimatedTelephonyCostUsd: z.number().min(0),
-  llmUsage: z.object({ inputTokens:z.number().int().min(0), outputTokens:z.number().int().min(0), totalTokens:z.number().int().min(0) }).optional(),
+  llmUsage: z
+    .object({
+      inputTokens: z.number().int().min(0),
+      outputTokens: z.number().int().min(0),
+      totalTokens: z.number().int().min(0),
+    })
+    .optional(),
 });
 export type OutcomeReport = z.infer<typeof outcomeReportSchema>;
 
 export const transcriptTurnSchema = z.object({
-  id: z.string(), sequence: z.number().int().positive(), speaker: z.enum(["REMOTE", "LIAISON", "USER_EXACT", "SYSTEM"]),
-  text: z.string().max(4_000), timestamp: z.string(),
+  id: z.string(),
+  sequence: z.number().int().positive(),
+  speaker: z.enum(["REMOTE", "LIAISON", "USER_EXACT", "SYSTEM"]),
+  text: z.string().max(4_000),
+  timestamp: z.string(),
 });
 export type TranscriptTurn = z.infer<typeof transcriptTurnSchema>;
 
-export const approvalStatusSchema = z.enum(["PENDING", "APPROVED", "REJECTED", "REPLACED", "EXPIRED", "EXECUTION_FAILED"]);
+export const approvalStatusSchema = z.enum([
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+  "REPLACED",
+  "EXPIRED",
+  "EXECUTION_FAILED",
+]);
 export const approvalRequestSchema = z.object({
-  id: z.string(), callId: z.string(), status: approvalStatusSchema, category: approvalCategorySchema,
-  question: z.string(), representativeRequest: z.string(), proposedSpeech: z.string(), consequences: z.string(),
-  amountCents: z.number().int().optional(), disclosureCardId: z.string().optional(), executionChannel: z.enum(["SPEECH", "DTMF"]).optional(),
-  createdAt: z.string(), expiresAt: z.string(),
+  id: z.string(),
+  callId: z.string(),
+  status: approvalStatusSchema,
+  category: approvalCategorySchema,
+  question: z.string(),
+  representativeRequest: z.string(),
+  proposedSpeech: z.string(),
+  consequences: z.string(),
+  amountCents: z.number().int().optional(),
+  disclosureCardId: z.string().optional(),
+  executionChannel: z.enum(["SPEECH", "DTMF"]).optional(),
+  createdAt: z.string(),
+  expiresAt: z.string(),
 });
 export type ApprovalRequest = z.infer<typeof approvalRequestSchema>;
 
 export const eventTypeSchema = z.enum([
-  "CASE_CREATED", "CASE_UPDATED", "PLAN_GENERATED", "PLAN_APPROVED", "CALL_CREATED", "CALL_DIALING", "CALL_CONNECTED", "CALL_STATE_CHANGED",
-  "REMOTE_TRANSCRIPT_FINAL", "AGENT_DECISION_PROPOSED", "AGENT_DECISION_REJECTED", "AGENT_SPEECH_STARTED", "AGENT_SPEECH_INTERRUPTED",
-  "AGENT_SPEECH_COMPLETED", "DTMF_SENT", "DISCLOSURE_DELIVERED", "CONSENT_RECORDED", "APPROVAL_REQUESTED", "APPROVAL_APPROVED",
-  "APPROVAL_REJECTED", "PRIVATE_INSTRUCTION_ADDED", "USER_EXACT_TEXT_SENT", "AGENT_PAUSED", "AGENT_RESUMED", "CALL_END_REQUESTED",
-  "CALL_ENDED", "OUTCOME_GENERATED", "MODEL_RESPONSE_RECEIVED", "TECHNICAL_ERROR",
+  "CASE_CREATED",
+  "CASE_UPDATED",
+  "PLAN_GENERATED",
+  "PLAN_APPROVED",
+  "CALL_CREATED",
+  "CALL_DIALING",
+  "CALL_CONNECTED",
+  "CALL_STATE_CHANGED",
+  "REMOTE_TRANSCRIPT_FINAL",
+  "AGENT_DECISION_PROPOSED",
+  "AGENT_DECISION_REJECTED",
+  "AGENT_SPEECH_STARTED",
+  "AGENT_SPEECH_INTERRUPTED",
+  "AGENT_SPEECH_COMPLETED",
+  "DTMF_SENT",
+  "DISCLOSURE_DELIVERED",
+  "CONSENT_RECORDED",
+  "APPROVAL_REQUESTED",
+  "APPROVAL_APPROVED",
+  "APPROVAL_REJECTED",
+  "PRIVATE_INSTRUCTION_ADDED",
+  "USER_EXACT_TEXT_SENT",
+  "AGENT_PAUSED",
+  "AGENT_RESUMED",
+  "CALL_END_REQUESTED",
+  "CALL_ENDED",
+  "OUTCOME_GENERATED",
+  "MODEL_RESPONSE_RECEIVED",
+  "TECHNICAL_ERROR",
 ]);
 export type EventType = z.infer<typeof eventTypeSchema>;
 

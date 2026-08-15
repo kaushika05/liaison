@@ -28,11 +28,16 @@ export async function attachViteDevMiddleware(app: FastifyInstance): Promise<voi
   const middie = await import("@fastify/middie");
   await app.register(middie.default);
   const { createServer } = await import("vite");
-  const vite = await createServer({ server: { middlewareMode: true }, appType: "spa" }) as unknown as ViteDevServerLike;
+  const vite = (await createServer({
+    server: { middlewareMode: true },
+    appType: "spa",
+  })) as unknown as ViteDevServerLike;
   const handle = (request: IncomingMessage, response: ServerResponse, next: (error?: unknown) => void): void => {
     if (isServerRoute(request.url ?? "")) return next();
     return vite.middlewares(request, response, next);
   };
   app.use(handle);
-  app.addHook("onClose", async () => { await vite.close(); });
+  app.addHook("onClose", async () => {
+    await vite.close();
+  });
 }

@@ -1,301 +1,2034 @@
-import {createHmac,randomUUID} from "node:crypto";
-import type {Config} from "../config.js";
-import {publicConfig} from "../config.js";
-import type {MessagingThreadSnapshot,SecureActionDetail} from "../../shared/api.js";
-import {defaultAuthority,type ApprovalRequest,type CallBrief,type OutcomeReport} from "../../shared/domain.js";
-import {isSmsResolvableTier,type AttentionTier,type ConditionalAuthorityRule,type SemanticCallEvent,semanticCallEventDedupKey} from "../../shared/protocol.js";
-import {canTransitionSupportThread} from "../../shared/support-thread-state.js";
-import type {InboundMessageRecord,MessageDeliveryEventRecord,OutboundMessageRecord,SupportThreadRecord} from "../database/db.js";
-import {LiaisonDatabase} from "../database/db.js";
-import {CallService,type ApplicationCallEvent} from "./call-service.js";
-import {ModelService} from "../agent/model-service.js";
-import {detectHighRisk} from "../core/policy.js";
-import {WebMessagingAdapter,TwilioSmsMessagingAdapter,type InboundProviderRequest,type MessagingAdapter,type ProviderFormParameters} from "../messaging/adapter.js";
-import {isDeliveryFailure,reduceMessageDelivery} from "../messaging/delivery.js";
-import {collectSupportDraft,clarificationFor,planCheckpointSchema,supportDraftSchema,type PlanCheckpoint,type SupportDraft} from "../messaging/draft.js";
-import {parseMessagingCommand,conciseCommandHelp,type MessagingCommand} from "../messaging/commands.js";
-import {composeSms,estimateSmsSegments} from "../messaging/composer.js";
-import {prohibitedSmsNotice,redactInboundSmsSecrets} from "../messaging/secrets.js";
-import {generateCallAuthorizationCode,generateSecureActionToken,hashCallAuthorization,hashSecureActionToken,normalizeMessagingAddress} from "../messaging/security.js";
-import {attentionTierForApproval,canonicalRuntimeRules,evaluateApprovalConditionalAuthority} from "../core/runtime-authority.js";
-import {conditionalRuleSummary,extractConditionalAuthorityRules} from "../messaging/conditional-rules.js";
-import {semanticEventsFromCapturedFacts,semanticEventsFromFinalTurn,semanticEventsFromOutcome} from "../messaging/semantic-extraction.js";
+import { createHmac, randomUUID } from "node:crypto";
+import type { Config } from "../config.js";
+import { publicConfig } from "../config.js";
+import type { MessagingThreadSnapshot, SecureActionDetail } from "../../shared/api.js";
+import { defaultAuthority, type ApprovalRequest, type CallBrief, type OutcomeReport } from "../../shared/domain.js";
+import {
+  isSmsResolvableTier,
+  type AttentionTier,
+  type ConditionalAuthorityRule,
+  type SemanticCallEvent,
+  semanticCallEventDedupKey,
+} from "../../shared/protocol.js";
+import { canTransitionSupportThread } from "../../shared/support-thread-state.js";
+import type {
+  InboundMessageRecord,
+  MessageDeliveryEventRecord,
+  OutboundMessageRecord,
+  SupportThreadRecord,
+} from "../database/db.js";
+import { LiaisonDatabase } from "../database/db.js";
+import { CallService, type ApplicationCallEvent } from "./call-service.js";
+import { ModelService } from "../agent/model-service.js";
+import { detectHighRisk } from "../core/policy.js";
+import {
+  WebMessagingAdapter,
+  TwilioSmsMessagingAdapter,
+  type InboundProviderRequest,
+  type MessagingAdapter,
+  type ProviderFormParameters,
+} from "../messaging/adapter.js";
+import { isDeliveryFailure, reduceMessageDelivery } from "../messaging/delivery.js";
+import {
+  collectSupportDraft,
+  clarificationFor,
+  planCheckpointSchema,
+  supportDraftSchema,
+  type PlanCheckpoint,
+  type SupportDraft,
+} from "../messaging/draft.js";
+import { parseMessagingCommand, conciseCommandHelp, type MessagingCommand } from "../messaging/commands.js";
+import { composeSms, estimateSmsSegments } from "../messaging/composer.js";
+import { prohibitedSmsNotice, redactInboundSmsSecrets } from "../messaging/secrets.js";
+import {
+  generateCallAuthorizationCode,
+  generateSecureActionToken,
+  hashCallAuthorization,
+  hashSecureActionToken,
+  normalizeMessagingAddress,
+} from "../messaging/security.js";
+import {
+  attentionTierForApproval,
+  canonicalRuntimeRules,
+  evaluateApprovalConditionalAuthority,
+} from "../core/runtime-authority.js";
+import { conditionalRuleSummary, extractConditionalAuthorityRules } from "../messaging/conditional-rules.js";
+import {
+  semanticEventsFromCapturedFacts,
+  semanticEventsFromFinalTurn,
+  semanticEventsFromOutcome,
+} from "../messaging/semantic-extraction.js";
 
-const PRINCIPAL_ID="owner";
-const ACTIVE_STATES=new Set(["CALL_STARTING","CALL_ACTIVE","AWAITING_USER_DECISION","CALL_ENDING"]);
-const optOutKeywords=new Set(["STOP","UNSUBSCRIBE","END","QUIT","STOPALL","REVOKE","OPTOUT"]);
-const optInKeywords=new Set(["START","UNSTOP"]);
+const PRINCIPAL_ID = "owner";
+const ACTIVE_STATES = new Set(["CALL_STARTING", "CALL_ACTIVE", "AWAITING_USER_DECISION", "CALL_ENDING"]);
+const optOutKeywords = new Set(["STOP", "UNSUBSCRIBE", "END", "QUIT", "STOPALL", "REVOKE", "OPTOUT"]);
+const optInKeywords = new Set(["START", "UNSTOP"]);
 
-interface WorkPayload { mediaRejected?:boolean; suppressProviderReply?:boolean; transientCallCode?:boolean }
+interface WorkPayload {
+  mediaRejected?: boolean;
+  suppressProviderReply?: boolean;
+  transientCallCode?: boolean;
+}
 
 export class MessagingOrchestrator {
-  private readonly workerId=`worker-${randomUUID()}`;
-  private readonly webAdapter=new WebMessagingAdapter();
-  private readonly smsAdapter:TwilioSmsMessagingAdapter|null;
-  private workerTimer:NodeJS.Timeout|null=null;
-  private flushPromise:Promise<void>|null=null;
-  private eventChain=Promise.resolve();
-  private unsubscribeCallEvents:()=>void;
-  private readonly transientOutboundBodies=new Map<string,string>();
-  private readonly transientInboundBodies=new Map<string,string>();
+  private readonly workerId = `worker-${randomUUID()}`;
+  private readonly webAdapter = new WebMessagingAdapter();
+  private readonly smsAdapter: TwilioSmsMessagingAdapter | null;
+  private workerTimer: NodeJS.Timeout | null = null;
+  private flushPromise: Promise<void> | null = null;
+  private eventChain = Promise.resolve();
+  private unsubscribeCallEvents: () => void;
+  private readonly transientOutboundBodies = new Map<string, string>();
+  private readonly transientInboundBodies = new Map<string, string>();
 
-  constructor(private readonly config:Config,private readonly database:LiaisonDatabase,private readonly calls:CallService,private readonly models:ModelService){
-    this.smsAdapter=this.makeSmsAdapter();
-    this.unsubscribeCallEvents=this.calls.onAnyCallEvent((event)=>{this.eventChain=this.eventChain.then(()=>this.handleCallEvent(event)).catch((error:unknown)=>{this.recordProjectionFailure(event,error);});});
+  constructor(
+    private readonly config: Config,
+    private readonly database: LiaisonDatabase,
+    private readonly calls: CallService,
+    private readonly models: ModelService,
+  ) {
+    this.smsAdapter = this.makeSmsAdapter();
+    this.unsubscribeCallEvents = this.calls.onAnyCallEvent((event) => {
+      this.eventChain = this.eventChain
+        .then(() => this.handleCallEvent(event))
+        .catch((error: unknown) => {
+          this.recordProjectionFailure(event, error);
+        });
+    });
   }
 
-  start():void {if(this.workerTimer)return;this.database.resetExpiredMessagingLeases();this.database.resetExpiredOutboundLeases();this.recoverTransientCallAuthorization();this.workerTimer=setInterval(()=>void this.flush(),350);this.workerTimer.unref();void (async()=>{try{await this.recoverTransientSecureAttention();await this.reconcileTerminalOutcome();await this.flush();}catch(error){this.recordProjectionFailure(null,error);}})();}
-  async stop():Promise<void>{if(this.workerTimer)clearInterval(this.workerTimer);this.workerTimer=null;this.unsubscribeCallEvents();await this.eventChain;const inFlight=this.flushPromise;if(inFlight)await inFlight;this.transientOutboundBodies.clear();this.transientInboundBodies.clear();}
-
-  private thread():SupportThreadRecord{return this.database.getOrCreateActiveSupportThread({id:randomUUID(),principalId:PRINCIPAL_ID,state:"IDLE",autonomyMode:"COPILOT",messagingOptState:"OPTED_IN",draft:null});}
-
-  snapshot():MessagingThreadSnapshot{
-    const thread=this.thread();const caseItem=thread.currentCaseId?this.database.getCase(thread.currentCaseId):null;const active=this.database.getActiveCall();
-    const call=active&&(!thread.activeCallId||active.id===thread.activeCallId)?this.calls.snapshot(active.id):null;
-    const attention=thread.pendingAttentionRequestId?this.database.getAttentionRequest(thread.pendingAttentionRequestId):call?this.database.getPendingAttentionRequest(call.id):null;
-    const conditionalAuthorityRules=caseItem?.brief?canonicalRuntimeRules(this.database.listConditionalAuthorityRules(thread.id,caseItem.id),caseItem.brief.version):[];
-    return {thread:{id:thread.id,state:thread.state,autonomyMode:thread.autonomyMode,currentCaseId:thread.currentCaseId,approvedPlanVersion:thread.approvedPlanVersion,activeCallId:thread.activeCallId,pendingAttentionRequestId:thread.pendingAttentionRequestId,messagingOptState:thread.messagingOptState},messages:this.database.listMessages(thread.id,{limit:250}).map((message)=>({...message,redactedBody:this.transientOutboundBodies.get(message.id)??this.transientInboundBodies.get(message.id)??message.redactedBody})),case:caseItem,call,attention:attention?{id:attention.id,tier:attention.tier,status:attention.status,question:attention.question,choices:attention.choices as Array<{id:string;shortCode:string;label:string;effect:string}>,expiresAt:attention.expiresAt,secureActionRequired:!isSmsResolvableTier(attention.tier)}:null,commitments:this.database.listCommitments({threadId:thread.id}),conditionalAuthorityRules,configuration:publicConfig(this.config),failedDeliveries:this.database.listFailedOutboundMessages().length,deadLetterWork:this.database.listDeadLetterWork().length,rejectedProviderRequests:this.database.countProviderSecurityEvents(),estimatedMessagingSpendUsd:Number((this.database.sumBillableOutboundSegments()*this.config.ESTIMATED_SMS_COST_PER_SEGMENT_USD).toFixed(4))};
+  start(): void {
+    if (this.workerTimer) return;
+    this.database.resetExpiredMessagingLeases();
+    this.database.resetExpiredOutboundLeases();
+    this.recoverTransientCallAuthorization();
+    this.workerTimer = setInterval(() => void this.flush(), 350);
+    this.workerTimer.unref();
+    void (async () => {
+      try {
+        await this.recoverTransientSecureAttention();
+        await this.reconcileTerminalOutcome();
+        await this.flush();
+      } catch (error) {
+        this.recordProjectionFailure(null, error);
+      }
+    })();
+  }
+  async stop(): Promise<void> {
+    if (this.workerTimer) clearInterval(this.workerTimer);
+    this.workerTimer = null;
+    this.unsubscribeCallEvents();
+    await this.eventChain;
+    const inFlight = this.flushPromise;
+    if (inFlight) await inFlight;
+    this.transientOutboundBodies.clear();
+    this.transientInboundBodies.clear();
   }
 
-  async receiveWebText(text:string):Promise<MessagingThreadSnapshot>{
-    const thread=this.thread();const detection=redactInboundSmsSecrets(text);const id=randomUUID();const parsed=parseMessagingCommand(detection.redactedText);const transientCallCode=parsed?.kind==="CALL";const durableBody=transientCallCode?"CALL [CALL_CODE]":detection.redactedText;
-    const inserted=this.database.insertInboundMessageAndSchedule({id,threadId:thread.id,providerKind:"WEB",providerMessageId:`WEB-${id}`,redactedBody:durableBody,sender:"WEB_OWNER",recipient:"LIAISON",caseId:thread.currentCaseId,callId:thread.activeCallId,segmentEstimate:estimateSmsSegments(durableBody).segments,idempotencyKey:`web:${id}`,errorCode:detection.blocked?`PROHIBITED_SECRET:${detection.categories.join(",")}`:null},{id:randomUUID(),kind:"PROCESS_INBOUND",payload:{transientCallCode},idempotencyKey:`work:web:${id}`});
-    if(transientCallCode)this.transientInboundBodies.set(inserted.message.id,detection.redactedText);
-    await this.flushThroughInbound(inserted.message.id);return this.snapshot();
+  private thread(): SupportThreadRecord {
+    return this.database.getOrCreateActiveSupportThread({
+      id: randomUUID(),
+      principalId: PRINCIPAL_ID,
+      state: "IDLE",
+      autonomyMode: "COPILOT",
+      messagingOptState: "OPTED_IN",
+      draft: null,
+    });
   }
 
-  deleteCase(caseId:string):void{
-    const deleted=this.calls.deleteCase(caseId);
-    for(const messageId of deleted.inboundMessageIds)this.transientInboundBodies.delete(messageId);
-    for(const messageId of deleted.outboundMessageIds)this.transientOutboundBodies.delete(messageId);
+  snapshot(): MessagingThreadSnapshot {
+    const thread = this.thread();
+    const caseItem = thread.currentCaseId ? this.database.getCase(thread.currentCaseId) : null;
+    const active = this.database.getActiveCall();
+    const call =
+      active && (!thread.activeCallId || active.id === thread.activeCallId) ? this.calls.snapshot(active.id) : null;
+    const attention = thread.pendingAttentionRequestId
+      ? this.database.getAttentionRequest(thread.pendingAttentionRequestId)
+      : call
+        ? this.database.getPendingAttentionRequest(call.id)
+        : null;
+    const conditionalAuthorityRules = caseItem?.brief
+      ? canonicalRuntimeRules(
+          this.database.listConditionalAuthorityRules(thread.id, caseItem.id),
+          caseItem.brief.version,
+        )
+      : [];
+    return {
+      thread: {
+        id: thread.id,
+        state: thread.state,
+        autonomyMode: thread.autonomyMode,
+        currentCaseId: thread.currentCaseId,
+        approvedPlanVersion: thread.approvedPlanVersion,
+        activeCallId: thread.activeCallId,
+        pendingAttentionRequestId: thread.pendingAttentionRequestId,
+        messagingOptState: thread.messagingOptState,
+      },
+      messages: this.database.listMessages(thread.id, { limit: 250 }).map((message) => ({
+        ...message,
+        redactedBody:
+          this.transientOutboundBodies.get(message.id) ??
+          this.transientInboundBodies.get(message.id) ??
+          message.redactedBody,
+      })),
+      case: caseItem,
+      call,
+      attention: attention
+        ? {
+            id: attention.id,
+            tier: attention.tier,
+            status: attention.status,
+            question: attention.question,
+            choices: attention.choices as Array<{ id: string; shortCode: string; label: string; effect: string }>,
+            expiresAt: attention.expiresAt,
+            secureActionRequired: !isSmsResolvableTier(attention.tier),
+          }
+        : null,
+      commitments: this.database.listCommitments({ threadId: thread.id }),
+      conditionalAuthorityRules,
+      configuration: publicConfig(this.config),
+      failedDeliveries: this.database.listFailedOutboundMessages().length,
+      deadLetterWork: this.database.listDeadLetterWork().length,
+      rejectedProviderRequests: this.database.countProviderSecurityEvents(),
+      estimatedMessagingSpendUsd: Number(
+        (this.database.sumBillableOutboundSegments() * this.config.ESTIMATED_SMS_COST_PER_SEGMENT_USD).toFixed(4),
+      ),
+    };
   }
 
-  twilioAdapterForUrl(callbackKind:"INBOUND_MESSAGE"|"STATUS_CALLBACK",exactUrl:string):TwilioSmsMessagingAdapter|null{
-    if(!this.config.TWILIO_ACCOUNT_SID||!this.config.TWILIO_AUTH_TOKEN||(!this.config.TWILIO_MESSAGING_SERVICE_SID&&!this.config.TWILIO_SMS_FROM_NUMBER))return null;
-    return new TwilioSmsMessagingAdapter({accountSid:this.config.TWILIO_ACCOUNT_SID,authToken:this.config.TWILIO_AUTH_TOKEN,inboundWebhookUrl:callbackKind==="INBOUND_MESSAGE"?exactUrl:`${this.config.PUBLIC_BASE_URL}/webhooks/twilio/messaging/inbound`,statusCallbackUrl:callbackKind==="STATUS_CALLBACK"?exactUrl:`${this.config.PUBLIC_BASE_URL}/webhooks/twilio/messaging/status`,messagingServiceSid:this.config.TWILIO_MESSAGING_SERVICE_SID||undefined,fromNumber:this.config.TWILIO_SMS_FROM_NUMBER||undefined});
+  async receiveWebText(text: string): Promise<MessagingThreadSnapshot> {
+    const thread = this.thread();
+    const detection = redactInboundSmsSecrets(text);
+    const id = randomUUID();
+    const parsed = parseMessagingCommand(detection.redactedText);
+    const transientCallCode = parsed?.kind === "CALL";
+    const durableBody = transientCallCode ? "CALL [CALL_CODE]" : detection.redactedText;
+    const inserted = this.database.insertInboundMessageAndSchedule(
+      {
+        id,
+        threadId: thread.id,
+        providerKind: "WEB",
+        providerMessageId: `WEB-${id}`,
+        redactedBody: durableBody,
+        sender: "WEB_OWNER",
+        recipient: "LIAISON",
+        caseId: thread.currentCaseId,
+        callId: thread.activeCallId,
+        segmentEstimate: estimateSmsSegments(durableBody).segments,
+        idempotencyKey: `web:${id}`,
+        errorCode: detection.blocked ? `PROHIBITED_SECRET:${detection.categories.join(",")}` : null,
+      },
+      { id: randomUUID(), kind: "PROCESS_INBOUND", payload: { transientCallCode }, idempotencyKey: `work:web:${id}` },
+    );
+    if (transientCallCode) this.transientInboundBodies.set(inserted.message.id, detection.redactedText);
+    await this.flushThroughInbound(inserted.message.id);
+    return this.snapshot();
   }
 
-  async acceptTwilioInbound(input:{adapter:TwilioSmsMessagingAdapter;request:InboundProviderRequest}):Promise<{accepted:boolean;duplicate:boolean;reason?:string}>{
-    const validation=await input.adapter.validateInboundRequest(input.request);if(!validation.valid)return{accepted:false,duplicate:false,reason:validation.reason};
-    const envelope=await input.adapter.parseInboundRequest(input.request);if(envelope.accountSid!==this.config.TWILIO_ACCOUNT_SID){const recorded=this.database.recordProviderSecurityEvent({id:randomUUID(),providerKind:"TWILIO_SMS",providerMessageId:envelope.providerMessageSid,eventType:"INBOUND_REJECTED",reasonCode:"ACCOUNT_MISMATCH"});return{accepted:false,duplicate:!recorded.created,reason:"ACCOUNT_MISMATCH"};}
-    const from=normalizeMessagingAddress(envelope.from);const to=normalizeMessagingAddress(envelope.to);
-    const expectedTo=normalizeMessagingAddress(this.config.TWILIO_SMS_FROM_NUMBER);const serviceSid=typeof envelope.parameters.MessagingServiceSid==="string"?envelope.parameters.MessagingServiceSid:"";
-    const destinationValid=Boolean(to&&((expectedTo&&to===expectedTo)||(this.config.TWILIO_MESSAGING_SERVICE_SID&&serviceSid===this.config.TWILIO_MESSAGING_SERVICE_SID)));
-    if(!destinationValid){const recorded=this.database.recordProviderSecurityEvent({id:randomUUID(),providerKind:"TWILIO_SMS",providerMessageId:envelope.providerMessageSid,eventType:"INBOUND_REJECTED",reasonCode:"DESTINATION_MISMATCH",redactedMetadata:{hasMessagingServiceSid:Boolean(serviceSid)}});return{accepted:false,duplicate:!recorded.created,reason:"DESTINATION_MISMATCH"};}
-    if(!from||from!==normalizeMessagingAddress(this.config.OWNER_PHONE_E164)){
-      const fingerprint=createHmac("sha256",this.config.CALL_TOKEN_SECRET||this.config.SESSION_SECRET||"development").update(envelope.from).digest("hex").slice(0,16);
-      const recorded=this.database.recordProviderSecurityEvent({id:randomUUID(),providerKind:"TWILIO_SMS",providerMessageId:envelope.providerMessageSid,eventType:"INBOUND_REJECTED",reasonCode:"UNAUTHORIZED_SENDER",redactedMetadata:{senderFingerprint:fingerprint}});return{accepted:true,duplicate:!recorded.created,reason:"UNAUTHORIZED_SENDER"};
+  deleteCase(caseId: string): void {
+    const deleted = this.calls.deleteCase(caseId);
+    for (const messageId of deleted.inboundMessageIds) this.transientInboundBodies.delete(messageId);
+    for (const messageId of deleted.outboundMessageIds) this.transientOutboundBodies.delete(messageId);
+  }
+
+  twilioAdapterForUrl(
+    callbackKind: "INBOUND_MESSAGE" | "STATUS_CALLBACK",
+    exactUrl: string,
+  ): TwilioSmsMessagingAdapter | null {
+    if (
+      !this.config.TWILIO_ACCOUNT_SID ||
+      !this.config.TWILIO_AUTH_TOKEN ||
+      (!this.config.TWILIO_MESSAGING_SERVICE_SID && !this.config.TWILIO_SMS_FROM_NUMBER)
+    )
+      return null;
+    return new TwilioSmsMessagingAdapter({
+      accountSid: this.config.TWILIO_ACCOUNT_SID,
+      authToken: this.config.TWILIO_AUTH_TOKEN,
+      inboundWebhookUrl:
+        callbackKind === "INBOUND_MESSAGE"
+          ? exactUrl
+          : `${this.config.PUBLIC_BASE_URL}/webhooks/twilio/messaging/inbound`,
+      statusCallbackUrl:
+        callbackKind === "STATUS_CALLBACK"
+          ? exactUrl
+          : `${this.config.PUBLIC_BASE_URL}/webhooks/twilio/messaging/status`,
+      messagingServiceSid: this.config.TWILIO_MESSAGING_SERVICE_SID || undefined,
+      fromNumber: this.config.TWILIO_SMS_FROM_NUMBER || undefined,
+    });
+  }
+
+  async acceptTwilioInbound(input: {
+    adapter: TwilioSmsMessagingAdapter;
+    request: InboundProviderRequest;
+  }): Promise<{ accepted: boolean; duplicate: boolean; reason?: string }> {
+    const validation = await input.adapter.validateInboundRequest(input.request);
+    if (!validation.valid) return { accepted: false, duplicate: false, reason: validation.reason };
+    const envelope = await input.adapter.parseInboundRequest(input.request);
+    if (envelope.accountSid !== this.config.TWILIO_ACCOUNT_SID) {
+      const recorded = this.database.recordProviderSecurityEvent({
+        id: randomUUID(),
+        providerKind: "TWILIO_SMS",
+        providerMessageId: envelope.providerMessageSid,
+        eventType: "INBOUND_REJECTED",
+        reasonCode: "ACCOUNT_MISMATCH",
+      });
+      return { accepted: false, duplicate: !recorded.created, reason: "ACCOUNT_MISMATCH" };
     }
-    if(!this.config.ALLOW_REAL_MESSAGING||this.config.MESSAGING_MODE!=="twilio_sms")return{accepted:true,duplicate:false,reason:"REAL_MESSAGING_DISABLED"};
-    const thread=this.thread();const detection=redactInboundSmsSecrets(envelope.body);const upper=envelope.body.trim().toUpperCase();const providerOpt=String(envelope.optOutType??"").toUpperCase();const suppressProviderReply=Boolean(providerOpt);const parsed=parseMessagingCommand(detection.redactedText);const transientCallCode=parsed?.kind==="CALL";const durableBody=transientCallCode?"CALL [CALL_CODE]":detection.redactedText;const inboundId=randomUUID();
-    const inserted=this.database.insertInboundMessageAndSchedule({id:inboundId,threadId:thread.id,providerKind:"TWILIO_SMS",providerMessageId:envelope.providerMessageSid,redactedBody:durableBody,sender:from,recipient:to!,caseId:thread.currentCaseId,callId:thread.activeCallId,segmentEstimate:Math.max(1,Number(typeof envelope.parameters.NumSegments==="string"?envelope.parameters.NumSegments:estimateSmsSegments(durableBody).segments)),idempotencyKey:`twilio:${envelope.providerMessageSid}`,errorCode:envelope.numMedia>0?"MMS_UNSUPPORTED":detection.blocked?`PROHIBITED_SECRET:${detection.categories.join(",")}`:null},{id:randomUUID(),kind:"PROCESS_INBOUND",payload:{mediaRejected:envelope.numMedia>0,suppressProviderReply,transientCallCode},idempotencyKey:`work:twilio:${envelope.providerMessageSid}`});
-    if(inserted.created&&transientCallCode)this.transientInboundBodies.set(inserted.message.id,detection.redactedText);
-    if(inserted.created&&(providerOpt==="STOP"||optOutKeywords.has(upper)))this.database.optOutSupportThreadAndCancelOutbound(thread.id,{reason:"OWNER_OPTED_OUT"});else if(inserted.created&&(providerOpt==="START"||optInKeywords.has(upper)))this.database.updateSupportThread(thread.id,{messagingOptState:"OPTED_IN"});
-    void this.flush();return{accepted:true,duplicate:!inserted.created};
-  }
-
-  async acceptTwilioStatus(input:{adapter:TwilioSmsMessagingAdapter;request:InboundProviderRequest}):Promise<{accepted:boolean;reason?:string}>{
-    const validation=await input.adapter.validateInboundRequest(input.request);if(!validation.valid)return{accepted:false,reason:validation.reason};const status=await input.adapter.parseStatusCallback(input.request);if(status.accountSid!==this.config.TWILIO_ACCOUNT_SID)return{accepted:false,reason:"ACCOUNT_MISMATCH"};const message=this.database.findOutboundMessageByProviderId(status.providerMessageSid);if(!message)return{accepted:true,reason:"UNKNOWN_MESSAGE"};
-    const eventKey=`${status.providerMessageSid}:${status.status}:${status.errorCode??""}:${stableParameterString(status.parameters)}`;
-    this.database.appendMessageDeliveryEvent({id:randomUUID(),outboundMessageId:message.id,providerMessageId:status.providerMessageSid,providerStatus:status.status,errorCode:status.errorCode,occurredAt:new Date().toISOString(),eventKey},deliveryReducer);
-    if(status.errorCode==="21610")this.database.optOutSupportThreadAndCancelOutbound(message.threadId,{reason:"TWILIO_21610_OPT_OUT"});
-    if(isDeliveryFailure(status.status)&&message.attentionRequestId){
-      this.database.enqueueOutboundMessage({id:randomUUID(),threadId:message.threadId,providerKind:"WEB",redactedBody:`Required SMS delivery failed${status.errorCode?` (${status.errorCode})`:""}. The call remains safely paused. Review the pending decision in this secure web thread: ${this.config.PUBLIC_BASE_URL}/`,sender:"LIAISON",recipient:"WEB_OWNER",caseId:message.caseId,callId:message.callId,attentionRequestId:message.attentionRequestId,segmentEstimate:1,idempotencyKey:`delivery-escalation:${message.id}`});
+    const from = normalizeMessagingAddress(envelope.from);
+    const to = normalizeMessagingAddress(envelope.to);
+    const expectedTo = normalizeMessagingAddress(this.config.TWILIO_SMS_FROM_NUMBER);
+    const serviceSid =
+      typeof envelope.parameters.MessagingServiceSid === "string" ? envelope.parameters.MessagingServiceSid : "";
+    const destinationValid = Boolean(
+      to &&
+        ((expectedTo && to === expectedTo) ||
+          (this.config.TWILIO_MESSAGING_SERVICE_SID && serviceSid === this.config.TWILIO_MESSAGING_SERVICE_SID)),
+    );
+    if (!destinationValid) {
+      const recorded = this.database.recordProviderSecurityEvent({
+        id: randomUUID(),
+        providerKind: "TWILIO_SMS",
+        providerMessageId: envelope.providerMessageSid,
+        eventType: "INBOUND_REJECTED",
+        reasonCode: "DESTINATION_MISMATCH",
+        redactedMetadata: { hasMessagingServiceSid: Boolean(serviceSid) },
+      });
+      return { accepted: false, duplicate: !recorded.created, reason: "DESTINATION_MISMATCH" };
     }
-    return{accepted:true};
+    if (!from || from !== normalizeMessagingAddress(this.config.OWNER_PHONE_E164)) {
+      const fingerprint = createHmac(
+        "sha256",
+        this.config.CALL_TOKEN_SECRET || this.config.SESSION_SECRET || "development",
+      )
+        .update(envelope.from)
+        .digest("hex")
+        .slice(0, 16);
+      const recorded = this.database.recordProviderSecurityEvent({
+        id: randomUUID(),
+        providerKind: "TWILIO_SMS",
+        providerMessageId: envelope.providerMessageSid,
+        eventType: "INBOUND_REJECTED",
+        reasonCode: "UNAUTHORIZED_SENDER",
+        redactedMetadata: { senderFingerprint: fingerprint },
+      });
+      return { accepted: true, duplicate: !recorded.created, reason: "UNAUTHORIZED_SENDER" };
+    }
+    if (!this.config.ALLOW_REAL_MESSAGING || this.config.MESSAGING_MODE !== "twilio_sms")
+      return { accepted: true, duplicate: false, reason: "REAL_MESSAGING_DISABLED" };
+    const thread = this.thread();
+    const detection = redactInboundSmsSecrets(envelope.body);
+    const upper = envelope.body.trim().toUpperCase();
+    const providerOpt = String(envelope.optOutType ?? "").toUpperCase();
+    const suppressProviderReply = Boolean(providerOpt);
+    const parsed = parseMessagingCommand(detection.redactedText);
+    const transientCallCode = parsed?.kind === "CALL";
+    const durableBody = transientCallCode ? "CALL [CALL_CODE]" : detection.redactedText;
+    const inboundId = randomUUID();
+    const inserted = this.database.insertInboundMessageAndSchedule(
+      {
+        id: inboundId,
+        threadId: thread.id,
+        providerKind: "TWILIO_SMS",
+        providerMessageId: envelope.providerMessageSid,
+        redactedBody: durableBody,
+        sender: from,
+        recipient: to!,
+        caseId: thread.currentCaseId,
+        callId: thread.activeCallId,
+        segmentEstimate: Math.max(
+          1,
+          Number(
+            typeof envelope.parameters.NumSegments === "string"
+              ? envelope.parameters.NumSegments
+              : estimateSmsSegments(durableBody).segments,
+          ),
+        ),
+        idempotencyKey: `twilio:${envelope.providerMessageSid}`,
+        errorCode:
+          envelope.numMedia > 0
+            ? "MMS_UNSUPPORTED"
+            : detection.blocked
+              ? `PROHIBITED_SECRET:${detection.categories.join(",")}`
+              : null,
+      },
+      {
+        id: randomUUID(),
+        kind: "PROCESS_INBOUND",
+        payload: { mediaRejected: envelope.numMedia > 0, suppressProviderReply, transientCallCode },
+        idempotencyKey: `work:twilio:${envelope.providerMessageSid}`,
+      },
+    );
+    if (inserted.created && transientCallCode)
+      this.transientInboundBodies.set(inserted.message.id, detection.redactedText);
+    if (inserted.created && (providerOpt === "STOP" || optOutKeywords.has(upper)))
+      this.database.optOutSupportThreadAndCancelOutbound(thread.id, { reason: "OWNER_OPTED_OUT" });
+    else if (inserted.created && (providerOpt === "START" || optInKeywords.has(upper)))
+      this.database.updateSupportThread(thread.id, { messagingOptState: "OPTED_IN" });
+    void this.flush();
+    return { accepted: true, duplicate: !inserted.created };
   }
 
-  flush():Promise<void>{if(this.flushPromise)return this.flushPromise;this.flushPromise=(async()=>{try{try{await this.reconcileTerminalOutcome();}catch(error){this.recordProjectionFailure(null,error);}await this.checkAttentionTimeout();await this.processInboundBatch();await this.processOutboundBatch();}finally{this.flushPromise=null;}})();return this.flushPromise;}
+  async acceptTwilioStatus(input: {
+    adapter: TwilioSmsMessagingAdapter;
+    request: InboundProviderRequest;
+  }): Promise<{ accepted: boolean; reason?: string }> {
+    const validation = await input.adapter.validateInboundRequest(input.request);
+    if (!validation.valid) return { accepted: false, reason: validation.reason };
+    const status = await input.adapter.parseStatusCallback(input.request);
+    if (status.accountSid !== this.config.TWILIO_ACCOUNT_SID) return { accepted: false, reason: "ACCOUNT_MISMATCH" };
+    const message = this.database.findOutboundMessageByProviderId(status.providerMessageSid);
+    if (!message) return { accepted: true, reason: "UNKNOWN_MESSAGE" };
+    const eventKey = `${status.providerMessageSid}:${status.status}:${status.errorCode ?? ""}:${stableParameterString(status.parameters)}`;
+    this.database.appendMessageDeliveryEvent(
+      {
+        id: randomUUID(),
+        outboundMessageId: message.id,
+        providerMessageId: status.providerMessageSid,
+        providerStatus: status.status,
+        errorCode: status.errorCode,
+        occurredAt: new Date().toISOString(),
+        eventKey,
+      },
+      deliveryReducer,
+    );
+    if (status.errorCode === "21610")
+      this.database.optOutSupportThreadAndCancelOutbound(message.threadId, { reason: "TWILIO_21610_OPT_OUT" });
+    if (isDeliveryFailure(status.status) && message.attentionRequestId) {
+      this.database.enqueueOutboundMessage({
+        id: randomUUID(),
+        threadId: message.threadId,
+        providerKind: "WEB",
+        redactedBody: `Required SMS delivery failed${status.errorCode ? ` (${status.errorCode})` : ""}. The call remains safely paused. Review the pending decision in this secure web thread: ${this.config.PUBLIC_BASE_URL}/`,
+        sender: "LIAISON",
+        recipient: "WEB_OWNER",
+        caseId: message.caseId,
+        callId: message.callId,
+        attentionRequestId: message.attentionRequestId,
+        segmentEstimate: 1,
+        idempotencyKey: `delivery-escalation:${message.id}`,
+      });
+    }
+    return { accepted: true };
+  }
+
+  flush(): Promise<void> {
+    if (this.flushPromise) return this.flushPromise;
+    this.flushPromise = (async () => {
+      try {
+        try {
+          await this.reconcileTerminalOutcome();
+        } catch (error) {
+          this.recordProjectionFailure(null, error);
+        }
+        await this.checkAttentionTimeout();
+        await this.processInboundBatch();
+        await this.processOutboundBatch();
+      } finally {
+        this.flushPromise = null;
+      }
+    })();
+    return this.flushPromise;
+  }
 
   // `flush` is single-flight, so awaiting it may join a pass that started before this message
   // existed. Yielding between attempts guarantees at least one flush begins afterwards, otherwise a
   // healthy message could be reported as unsettled.
-  private async flushThroughInbound(messageId:string):Promise<void>{for(let attempt=0;attempt<4;attempt+=1){if(attempt>0)await new Promise((resolve)=>setTimeout(resolve,0));await this.flush();const message=this.database.getInboundMessage(messageId);if(message&&new Set(["COMPLETED","REJECTED","DEAD_LETTER"]).has(message.processingState))return;}throw new Error("INBOUND_PROCESSING_DID_NOT_SETTLE");}
-
-  private async checkAttentionTimeout():Promise<void>{const thread=this.database.getActiveSupportThread(PRINCIPAL_ID);if(!thread?.pendingAttentionRequestId)return;const request=this.database.getAttentionRequest(thread.pendingAttentionRequestId);if(!request||request.status!=="PENDING"||request.resolution!==null)return;const now=Date.now();const reminderAt=Date.parse(request.createdAt)+this.config.SMS_DECISION_TIMEOUT_SECONDS*1_000;if(now>=Date.parse(request.expiresAt)){const expired=this.database.resolveAttentionRequest({id:request.id,expectedCallId:request.callId,resolution:{reason:"USER_UNAVAILABLE",approvalInferred:false},now:new Date(now).toISOString()});if(!expired)return;if(request.callId&&this.database.getCall(request.callId)&&!new Set(["COMPLETED","FAILED"]).has(this.database.getCall(request.callId)!.state))await this.calls.userUnavailable(request.callId);await this.reply(this.database.getSupportThread(thread.id)!,"The decision deadline passed. Liaison did not infer approval and ended the call unresolved.",`attention-expired:${request.id}`,"WEB");return;}if(now>=reminderAt&&request.callId&&!this.database.getSemanticCallEvent(request.callId,`ATTENTION_REMINDER:${request.id}`)){this.database.insertSemanticCallEvent({id:randomUUID(),threadId:thread.id,caseId:request.caseId!,callId:request.callId,eventType:"ATTENTION_REMINDER",semanticKey:`ATTENTION_REMINDER:${request.id}`,payload:{attentionRequestId:request.id},occurredAt:new Date(now).toISOString()});const remaining=Math.max(1,Math.ceil((Date.parse(request.expiresAt)-now)/1_000));await this.reply(thread,`Reminder: a decision is still required. ${remaining} seconds remain. Silence will not be treated as approval.`,`attention-reminder:${request.id}`,"WEB");}}
-
-  private async processInboundBatch():Promise<void>{const items=this.database.claimMessagingWork({workerId:this.workerId,now:new Date().toISOString(),leaseSeconds:30,limit:20});for(const item of items){try{if(!item.inboundMessageId)throw new Error("INBOUND_WORK_MISSING_MESSAGE");const message=this.database.getInboundMessage(item.inboundMessageId);if(!message)throw new Error("INBOUND_MESSAGE_NOT_FOUND");await this.processInbound(message,item.payload as WorkPayload);this.database.completeMessagingWork(item.id,this.workerId);}catch(error){const text=safeError(error);if(item.attemptCount>=3)this.database.deadLetterMessagingWork(item.id,this.workerId,text);else this.database.retryMessagingWork(item.id,this.workerId,text,new Date(Date.now()+Math.min(30_000,item.attemptCount*1_000)).toISOString());}}}
-  private async processOutboundBatch():Promise<void>{const items=this.database.claimOutboundMessages({workerId:this.workerId,now:new Date().toISOString(),leaseSeconds:45,limit:20});for(const message of items){let dispatched=false;try{const thread=this.database.getSupportThread(message.threadId);if(!thread)throw new Error("THREAD_DELETED");if(message.providerKind==="TWILIO_SMS"&&thread.messagingOptState==="OPTED_OUT")throw new Error("OWNER_OPTED_OUT");let adapter:MessagingAdapter;if(message.providerKind==="TWILIO_SMS"){if(!this.smsAdapter)throw new Error("SMS_ADAPTER_MISSING");adapter=this.smsAdapter;}else adapter=this.webAdapter;const body=this.transientOutboundBodies.get(message.id)??message.redactedBody;const hasTransientMarker=/\[(?:CALL_CODE|SECURE_ACTION_TOKEN)\]/.test(message.redactedBody);if(hasTransientMarker&&!this.transientOutboundBodies.has(message.id))throw new Error("TRANSIENT_DELIVERY_MATERIAL_LOST_AFTER_RESTART");dispatched=true;const result=await adapter.sendText({messageId:message.id,to:message.recipient,body});this.database.markOutboundSent({id:message.id,workerId:this.workerId,providerMessageId:result.providerMessageId,deliveryState:adapter.kind==="WEB"?"DELIVERED":providerState(result.status)});}catch(error){const code=safeError(error);if(message.providerKind==="TWILIO_SMS"&&dispatched)this.database.markOutboundAmbiguous(message.id,this.workerId,code);else this.database.deadLetterOutboundMessage(message.id,this.workerId,code);}}}
-
-  private async processInbound(message:InboundMessageRecord,payload:WorkPayload):Promise<void>{
-    const thread=this.database.getSupportThread(message.threadId);if(!thread)throw new Error("THREAD_NOT_FOUND");
-    if(message.errorCode?.startsWith("PROHIBITED_SECRET")){if(!payload.suppressProviderReply)await this.reply(thread,prohibitedSmsNotice,`secret:${message.id}`,message.providerKind);return;}
-    if(payload.mediaRejected){if(!payload.suppressProviderReply)await this.reply(thread,`Media attachments are not supported and were not downloaded. Use the secure web app: ${this.config.PUBLIC_BASE_URL}/`, `mms:${message.id}`,message.providerKind);return;}
-    const effectiveBody=payload.transientCallCode?this.transientInboundBodies.get(message.id):message.redactedBody;if(payload.transientCallCode&&!effectiveBody){await this.reply(thread,"That call code is no longer available after the server restarted. Review and approve the current plan to issue a fresh code.",`call-transient-lost:${message.id}`,message.providerKind);return;}const effectiveMessage=effectiveBody===message.redactedBody?message:{...message,redactedBody:effectiveBody!};const command=parseMessagingCommand(effectiveMessage.redactedBody);if(command){await this.handleCommand(thread,effectiveMessage,command,payload);this.transientInboundBodies.delete(message.id);return;}
-    if(thread.messagingOptState==="OPTED_OUT")return;
-    if(new Set(["COMPLETED","FAILED","CANCELLED"]).has(thread.state)){await this.reply(thread,"This support request is closed. Send NEW to begin another support request.",`terminal-guidance:${message.id}`,message.providerKind,["NEW"]);return;}
-    const checkpoint=checkpointFromDraft(thread.draft);if(checkpoint?.sourceMessageId===message.id){await this.resumePlanCheckpoint(thread,supportDraftSchema.parse(thread.draft),checkpoint,message.providerKind);return;}
-    const pendingDraft=supportDraftSchema.safeParse(thread.draft);if(pendingDraft.success&&pendingDraft.data.pendingPlanSourceMessageId===message.id){await this.createPlanFromDraft(thread,pendingDraft.data,message.providerKind,message.id);return;}
-    if(thread.state==="CALL_ACTIVE"||thread.state==="AWAITING_USER_DECISION"){if(thread.state==="AWAITING_USER_DECISION"){await this.reply(thread,"A decision is pending. Use the current A/B/C choice or secure review link; other instructions cannot bypass it.",`decision-pending:${message.id}`,message.providerKind);return;}const intent=await this.models.classifyMessagingIntent({threadState:thread.state,message:effectiveMessage.redactedBody});const instruction=intent.intent==="PRIVATE_CALL_INSTRUCTION"?intent.privateInstruction:intent.intent==="ADD_CONTEXT"?intent.contextToAdd:effectiveMessage.redactedBody;if(thread.activeCallId)this.calls.privateInstruction(thread.activeCallId,instruction??effectiveMessage.redactedBody);await this.reply(thread,"Private instruction added. Liaison will apply it only within the approved plan and hard safety limits.",`private:${message.id}`,message.providerKind);return;}
-    if(/^change (?:the )?(?:goal|desired outcome)\s+(?:to|:)\s*/i.test(effectiveMessage.redactedBody)&&thread.currentCaseId){await this.editGoal(thread,effectiveMessage);return;}
-    const draft=collectSupportDraft(thread.draft,effectiveMessage.redactedBody,this.config.OWNER_DISPLAY_NAME);let working=thread;if(working.state==="IDLE")working=this.moveThread(working,"COLLECTING_ISSUE",{draft});this.moveThread(working,draft.awaitingField?"AWAITING_INFORMATION":"PLAN_DRAFTED",{draft});
-    if(draft.awaitingField){await this.reply(this.database.getSupportThread(thread.id)!,clarificationFor(draft.awaitingField),`clarify:${message.id}`,message.providerKind);return;}
-    const preparedDraft=supportDraftSchema.parse({...draft,pendingPlanSourceMessageId:message.id});const prepared=this.database.updateSupportThread(thread.id,{draft:preparedDraft})!;await this.createPlanFromDraft(prepared,preparedDraft,message.providerKind,message.id);
-  }
-
-  private async handleCommand(thread:SupportThreadRecord,message:InboundMessageRecord,command:MessagingCommand,payload:WorkPayload):Promise<void>{
-    const reply=async(text:string,key:string)=>{if(!payload.suppressProviderReply)await this.reply(this.database.getSupportThread(thread.id)!,text,key,message.providerKind);};
-    if(command.kind==="STOP"){this.database.optOutSupportThreadAndCancelOutbound(thread.id,{reason:"OWNER_OPTED_OUT"});return;}
-    if(command.kind==="START"){this.database.updateSupportThread(thread.id,{messagingOptState:"OPTED_IN"});await reply("Messaging is active. Send NEW to begin, or describe the support issue in your own words. Do not text account credentials.",`start:${message.id}`);return;}
-    if(thread.messagingOptState==="OPTED_OUT")return;
-    if(command.kind==="HELP"){await reply(`${conciseCommandHelp}\nSecure app: ${this.config.PUBLIC_BASE_URL}/`,`help:${message.id}`);return;}
-    if(command.kind==="STATUS"){await reply(this.statusText(thread),`status:${message.id}`);return;}
-    if(command.kind==="LINK"){await reply(`Open the secure Liaison app: ${this.config.PUBLIC_BASE_URL}/`,`link:${message.id}`);return;}
-    if(command.kind==="NEW"){if(ACTIVE_STATES.has(thread.state)){await reply("A call is active. Finish or hang up before starting a new case.",`new-blocked:${message.id}`);return;}this.database.revokeCallAuthorizations({threadId:thread.id,reason:"NEW_CASE"});this.database.updateSupportThread(thread.id,{isActive:false});const fresh=this.thread();this.moveThread(fresh,"COLLECTING_ISSUE",{draft:{}});await this.reply(this.database.getSupportThread(fresh.id)!,"Describe the company, official US support number, what happened, and the exact outcome you want. Liaison will ask only for missing details.",`new:${message.id}`,message.providerKind);return;}
-    if(command.kind==="EDIT"){if(ACTIVE_STATES.has(thread.state)){await reply(`A call is active. Use the secure cockpit for steering: ${this.config.PUBLIC_BASE_URL}/`,`edit-active:${message.id}`);return;}if(thread.currentCaseId)this.database.revokeCallAuthorizations({caseId:thread.currentCaseId,reason:"PLAN_EDIT_REQUESTED"});this.database.updateSupportThread(thread.id,{state:thread.currentCaseId?"PLAN_DRAFTED":"COLLECTING_ISSUE",approvedPlanVersion:null});await reply(thread.currentCaseId?`Edit the plan in the secure app: ${this.config.PUBLIC_BASE_URL}/`:`Send the support request in your own words.`,`edit:${message.id}`);return;}
-    if(command.kind==="CANCEL"){if(ACTIVE_STATES.has(thread.state)){await reply("CANCEL does not end a live call. Send HANGUP, then HANGUP YES.",`cancel-active:${message.id}`);return;}this.database.revokeCallAuthorizations({threadId:thread.id,reason:"CASE_CANCELLED"});this.database.updateSupportThread(thread.id,{state:"CANCELLED",draft:null,approvedPlanVersion:null,isActive:false});const fresh=this.thread();await this.reply(fresh,"The draft was cancelled. Send NEW when you want to begin another support request.",`cancel:${message.id}`,message.providerKind);return;}
-    if(command.kind==="MODE"){if(ACTIVE_STATES.has(thread.state)){await reply("Autonomy mode cannot change during an active call. Pause or finish the call first.",`mode-active:${message.id}`);return;}if(thread.currentCaseId)this.database.revokeCallAuthorizations({caseId:thread.currentCaseId,reason:"AUTONOMY_CHANGED"});const next=this.database.updateSupportThread(thread.id,{autonomyMode:command.mode,approvedPlanVersion:null,state:thread.currentCaseId?"PLAN_DRAFTED":thread.state})!;await reply(`${command.mode} mode selected. Hard-denied actions remain denied. ${thread.currentCaseId?"Review and approve the plan again.":""}`.trim(),`mode:${message.id}`);void next;return;}
-    if(command.kind==="APPROVE_PLAN"){await this.approvePlan(thread,message);return;}
-    if(command.kind==="CALL"){await this.authorizeCall(thread,message,command.code);return;}
-    if(command.kind==="PAUSE"){if(!thread.activeCallId){await reply("There is no active call to pause.",`pause-none:${message.id}`);return;}await this.calls.pause(thread.activeCallId);await reply("Autonomous substantive replies are paused. Transcription continues. Reply RESUME to continue.",`pause:${message.id}`);return;}
-    if(command.kind==="RESUME"){if(!thread.activeCallId){await reply("There is no active call to resume.",`resume-none:${message.id}`);return;}if(thread.pendingAttentionRequestId||thread.state==="AWAITING_USER_DECISION"){await reply("A blocking decision is pending. Resolve it through A/B/C or the secure review; RESUME cannot bypass it.",`resume-pending:${message.id}`);return;}await this.calls.resume(thread.activeCallId);await reply("Liaison resumed after reviewing the intervening transcript context.",`resume:${message.id}`);return;}
-    if(command.kind==="EXACT_SPEECH"){if(!thread.activeCallId){await reply("There is no active call for exact speech.",`say-none:${message.id}`);return;}if(thread.state==="AWAITING_USER_DECISION"){await reply("Exact speech cannot bypass a pending sensitive or material decision. Use the secure review link.",`say-pending:${message.id}`);return;}await this.calls.exactText(thread.activeCallId,command.text);await reply("Your exact text was spoken after deterministic safety validation.",`say:${message.id}`);return;}
-    if(command.kind==="HANGUP_REQUEST"){this.database.updateSupportThread(thread.id,{draft:{...draftObject(thread.draft),hangupRequestedAt:new Date().toISOString()}});await reply("Reply HANGUP YES within 2 minutes to end the live call.",`hangup-request:${message.id}`);return;}
-    if(command.kind==="HANGUP_CONFIRM"){const requested=String(draftObject(thread.draft).hangupRequestedAt??"");if(!thread.activeCallId||!requested||Date.now()-Date.parse(requested)>120_000){await reply("No current hang-up confirmation is pending. Send HANGUP first.",`hangup-stale:${message.id}`);return;}const ended=await this.calls.hangup(thread.activeCallId);if(!["COMPLETED","FAILED"].includes(ended.state)||!ended.outcome)throw new Error("CALL_TERMINATION_NOT_CONFIRMED");await reply("The call was ended at your request.",`hangup:${message.id}`);return;}
-    if(command.kind==="CHOICE"){await this.resolveSmsChoice(thread,message,command.code);return;}
-  }
-
-  private async createPlanFromDraft(thread:SupportThreadRecord,draft:SupportDraft,provider:"WEB"|"TWILIO_SMS"|"SIMULATOR",sourceId:string):Promise<void>{
-    const risks=detectHighRisk(`${draft.companyName}\n${draft.issueDescription}\n${draft.desiredOutcome}`);if(risks.length){this.database.updateSupportThread(thread.id,{state:"FAILED"});await this.reply(thread,`Liaison cannot handle this request because it may involve an excluded high-risk category: ${risks.join(", ")}. No call was started.`,`risk:${sourceId}`,provider);return;}
-    const existing=thread.currentCaseId&&new Set(["PLAN_DRAFTED","AWAITING_PLAN_APPROVAL","AWAITING_AVAILABILITY"]).has(thread.state)?this.database.getCase(thread.currentCaseId):null;
-    if(existing?.brief){
-      this.database.revokeCallAuthorizations({caseId:existing.id,reason:"PLAN_REVISED_BY_MESSAGE"});
-      const checkpoint:PlanCheckpoint={sourceMessageId:sourceId,caseId:existing.id,operation:"REVISE",basePlanVersion:existing.brief.version};const checkpointDraft=supportDraftSchema.parse({...draft,planCheckpoint:checkpoint});
-      const bound=this.database.updateSupportThread(thread.id,{currentCaseId:existing.id,state:"PLAN_DRAFTED",draft:checkpointDraft,approvedPlanVersion:null})!;await this.resumePlanCheckpoint(bound,checkpointDraft,checkpoint,provider);return;
-    }
-    const item=await this.calls.createCase({userFirstName:draft.userFirstName!,companyName:draft.companyName!,phoneNumber:draft.phoneNumberE164!,issueDescription:padIssue(draft.issueDescription!),chronologyText:"",desiredOutcome:draft.desiredOutcome!,acceptableAlternativesText:draft.acceptableAlternatives.join("\n"),unacceptableOutcomesText:draft.unacceptableOutcomes.join("\n"),knownFactsText:draft.knownFacts.join("\n"),disclosures:[],authority:{...defaultAuthority,forbiddenActions:[...new Set(draft.unacceptableOutcomes)].slice(0,30)},officialNumberConfirmed:true,authorizedAccountConfirmed:true,lowRiskConfirmed:true},{idempotencyKey:`messaging-plan:${thread.id}:${sourceId}`});
-    const checkpoint:PlanCheckpoint={sourceMessageId:sourceId,caseId:item.id,operation:"CREATE",basePlanVersion:0};const checkpointDraft=supportDraftSchema.parse({...draft,planCheckpoint:checkpoint});const bound=this.database.updateSupportThread(thread.id,{currentCaseId:item.id,state:"PLAN_DRAFTED",draft:checkpointDraft,approvedPlanVersion:null})!;await this.resumePlanCheckpoint(bound,checkpointDraft,checkpoint,provider);
-  }
-
-  private async resumePlanCheckpoint(thread:SupportThreadRecord,draft:SupportDraft,checkpoint:PlanCheckpoint,provider:"WEB"|"TWILIO_SMS"|"SIMULATOR"):Promise<void>{
-    const item=this.database.getCase(checkpoint.caseId);if(!item||thread.currentCaseId!==item.id)throw new Error("PLAN_CHECKPOINT_CASE_MISMATCH");let brief=item.brief;
-    if(checkpoint.operation==="CREATE"){
-      if(brief&&brief.version!==1)throw new Error("PLAN_CHECKPOINT_VERSION_CONFLICT");brief??=await this.calls.generatePlan(item.id);
-    }else{
-      if(!brief||brief.version<checkpoint.basePlanVersion)throw new Error("PLAN_CHECKPOINT_VERSION_CONFLICT");
-      if(brief.version===checkpoint.basePlanVersion)brief=this.calls.savePlan(item.id,this.revisedPlan(brief,draft));
-      else if(brief.version!==checkpoint.basePlanVersion+1)throw new Error("PLAN_CHECKPOINT_VERSION_CONFLICT");
-    }
-    if(checkpoint.committedPlanVersion!==undefined&&checkpoint.committedPlanVersion!==brief.version)throw new Error("PLAN_CHECKPOINT_VERSION_CONFLICT");
-    const committedDraft=supportDraftSchema.parse({...draft,pendingPlanSourceMessageId:undefined,planCheckpoint:{...checkpoint,committedPlanVersion:brief.version}});this.database.updateSupportThread(thread.id,{currentCaseId:item.id,state:"AWAITING_PLAN_APPROVAL",draft:committedDraft,approvedPlanVersion:null});const rules=checkpoint.operation==="REVISE"?canonicalRuntimeRules(this.database.listConditionalAuthorityRules(thread.id,item.id),brief.version):this.replaceConditionalRules(thread.id,item.id,brief.version,committedDraft);const required=["APPROVE PLAN","EDIT",this.config.PUBLIC_BASE_URL,...this.planRuleFragments(rules)];await this.reply(this.database.getSupportThread(thread.id)!,this.planSummary(brief,thread.autonomyMode,rules),`plan:${item.id}:v${brief.version}`,provider,required);
-  }
-
-  private revisedPlan(brief:CallBrief,draft:SupportDraft):CallBrief{return{...brief,companyName:draft.companyName!,phoneNumberE164:draft.phoneNumberE164!,userFirstName:draft.userFirstName!,title:`${draft.companyName} support request`.slice(0,160),issueSummary:padIssue(draft.issueDescription!).slice(0,4_000),desiredOutcome:draft.desiredOutcome!,acceptableAlternatives:draft.acceptableAlternatives,unacceptableOutcomes:draft.unacceptableOutcomes,knownFacts:draft.knownFacts,authority:{...brief.authority,forbiddenActions:[...new Set(draft.unacceptableOutcomes)].slice(0,30)}};}
-
-  private async approvePlan(thread:SupportThreadRecord,message:InboundMessageRecord):Promise<void>{const item=thread.currentCaseId?this.database.getCase(thread.currentCaseId):null;if(!item?.brief||!new Set(["AWAITING_PLAN_APPROVAL","PLAN_DRAFTED"]).has(thread.state)){await this.reply(thread,"There is no complete plan ready for approval yet.",`approve-none:${message.id}`,message.providerKind);return;}const code=generateCallAuthorizationCode();const hash=hashCallAuthorization({secret:this.callSecret(),threadId:thread.id,caseId:item.id,planVersion:item.brief.version,destination:item.brief.phoneNumberE164,telephonyMode:this.config.TELEPHONY_MODE,code});const authorizationId=randomUUID();this.database.createCallAuthorization({id:authorizationId,threadId:thread.id,caseId:item.id,planVersion:item.brief.version,destinationE164:item.brief.phoneNumberE164,telephonyMode:this.config.TELEPHONY_MODE,codeHash:hash,expiresAt:new Date(Date.now()+10*60_000).toISOString()});this.moveThread(this.database.getSupportThread(thread.id)!,"AWAITING_AVAILABILITY");const rawBody=[`Plan ${item.brief.version} approved.`,`When you are available for up to ${this.config.MAX_CALL_DURATION_MINUTES} minutes, reply exactly CALL ${code}.`,`The code expires in 10 minutes and works once. Editing the plan, destination, call mode, or autonomy invalidates it.`].join("\n");const durableBody=rawBody.replace(code,"[CALL_CODE]");await this.reply(this.database.getSupportThread(thread.id)!,durableBody,`auth:${authorizationId}`,message.providerKind,["CALL [CALL_CODE]"],rawBody,[`CALL ${code}`]);}
-
-  private async authorizeCall(thread:SupportThreadRecord,message:InboundMessageRecord,code:string):Promise<void>{const item=thread.currentCaseId?this.database.getCase(thread.currentCaseId):null;if(!item?.brief||item.approvedVersion!==item.brief.version){await this.reply(thread,"That call code is invalid or stale. Review and approve the current plan again.",`call-invalid:${message.id}`,message.providerKind);return;}const hash=hashCallAuthorization({secret:this.callSecret(),threadId:thread.id,caseId:item.id,planVersion:item.brief.version,destination:item.brief.phoneNumberE164,telephonyMode:this.config.TELEPHONY_MODE,code});const consumed=this.database.consumeCallAuthorization({threadId:thread.id,caseId:item.id,planVersion:item.brief.version,destinationE164:item.brief.phoneNumberE164,telephonyMode:this.config.TELEPHONY_MODE,codeHash:hash});if(!consumed){await this.reply(thread,"That call code is invalid, expired, stale, or already used. No call was started.",`call-invalid:${message.id}`,message.providerKind);return;}this.moveThread(this.database.getSupportThread(thread.id)!,"CALL_STARTING");try{const call=this.config.TELEPHONY_MODE==="simulator"?await this.calls.startSimulation(item.id,"messaging-complete",this.config.NODE_ENV==="test"):await this.calls.startLive(item.id,consumed.id);this.calls.setAutonomyMode(call.id,thread.autonomyMode);this.database.updateSupportThread(thread.id,{activeCallId:call.id,state:"CALL_ACTIVE"});await this.reply(this.database.getSupportThread(thread.id)!,`Calling ${item.companyName} now. Liaison will send only important changes. Reply STATUS for an update, PAUSE to stop autonomous replies, or HANGUP to request ending the call.`,`call-started:${call.id}`,message.providerKind);}catch(error){const active=this.database.getActiveCall();const ambiguous=active?.mode==="TWILIO"&&active.case_id===item.id&&active.state==="ENDING"&&Boolean(active.terminal_reason?.startsWith("AMBIGUOUS_"));this.database.updateSupportThread(thread.id,ambiguous?{state:"CALL_ENDING",activeCallId:active.id}:{state:"FAILED"});await this.reply(this.database.getSupportThread(thread.id)!,ambiguous?"The provider may have accepted the call, but Liaison did not receive confirmation. No retry will occur and another call is blocked. Check Twilio Calls and end any matching call; a signed provider callback can reconcile this state.":`The call could not be started safely: ${safeError(error)} No automatic retry will occur.`,`call-failed:${message.id}`,message.providerKind);}}
-
-  private async editGoal(thread:SupportThreadRecord,message:InboundMessageRecord):Promise<void>{const item=this.database.getCase(thread.currentCaseId!);if(!item?.brief)return;const desired=message.redactedBody.replace(/^change (?:the )?(?:goal|desired outcome)\s+(?:to|:)\s*/i,"").trim();if(desired.length<3){await this.reply(thread,"State the revised outcome after 'Change goal to'.",`edit-invalid:${message.id}`,message.providerKind);return;}const brief=this.calls.savePlan(item.id,{...item.brief,desiredOutcome:desired});this.database.updateSupportThread(thread.id,{state:"AWAITING_PLAN_APPROVAL",approvedPlanVersion:null});const draft={...draftObject(thread.draft),desiredOutcome:desired} as SupportDraft;const rules=this.replaceConditionalRules(thread.id,item.id,brief.version,draft);await this.reply(this.database.getSupportThread(thread.id)!,this.planSummary(brief,thread.autonomyMode,rules),`plan-edit:${item.id}:v${brief.version}`,message.providerKind,["APPROVE PLAN","EDIT",this.config.PUBLIC_BASE_URL,...this.planRuleFragments(rules)]);}
-
-  private async resolveSmsChoice(thread:SupportThreadRecord,message:InboundMessageRecord,code:"A"|"B"|"C"):Promise<void>{const request=thread.pendingAttentionRequestId?this.database.getAttentionRequest(thread.pendingAttentionRequestId):thread.activeCallId?this.database.getPendingAttentionRequest(thread.activeCallId):null;if(!request||request.tier!=="LOW_CONSEQUENCE"||!request.callId){await this.reply(thread,"There is no current SMS-eligible choice. Sensitive or material decisions must be reviewed in the secure app.",`choice-none:${message.id}`,message.providerKind);return;}const choice=(request.choices as Array<{id:string;shortCode:string;label:string;effect:string}>).find((item)=>item.shortCode===code);if(!choice){await this.reply(thread,"That choice is not available for the current decision.",`choice-invalid:${message.id}`,message.providerKind);return;}const reservationId=randomUUID();const reserved=this.database.reserveLowConsequenceAttention({id:request.id,expectedCallId:request.callId,reservationId,choiceId:choice.id,shortCode:code,messageId:message.id});if(!reserved){await this.reply(thread,"That decision expired, was already resolved, or is being executed. It was not executed again.",`choice-stale:${message.id}`,message.providerKind);return;}try{if(code==="B")await this.calls.exactTextForReservedAttention(request.callId,request.id,"Could you please give an estimated wait time?");if(code==="C")await this.calls.exactTextForReservedAttention(request.callId,request.id,"Could you please connect me with a supervisor?");await this.calls.resumeReservedAttention(request.callId,request.id);const resolved=this.database.finishLowConsequenceAttention({id:request.id,expectedCallId:request.callId,reservationId,resolution:{executionState:"SUCCEEDED",choiceId:choice.id,shortCode:code,messageId:message.id,channel:"SMS"}});if(!resolved)throw new Error("LOW_CONSEQUENCE_FINALIZATION_FAILED");this.database.updateSupportThread(thread.id,{state:"CALL_ACTIVE",pendingAttentionRequestId:null});await this.reply(this.database.getSupportThread(thread.id)!,`${choice.label}. The call is continuing within the approved plan.`,`choice:${request.id}:${code}`,message.providerKind);await this.calls.continueAfterReservedAttention(request.callId);}catch(error){this.database.cancelLowConsequenceAttention({id:request.id,expectedCallId:request.callId,reservationId,reason:safeError(error)});try{await this.calls.userUnavailable(request.callId);}catch(terminationError){this.recordProjectionFailure(null,terminationError);}await this.reply(this.database.getSupportThread(thread.id)!,"The selected call action could not be confirmed. Liaison did not retry it and safely ended or paused the call for operator review.",`choice-failed:${request.id}:${code}`,message.providerKind);throw error;}}
-
-  secureAction(token:string):SecureActionDetail{const hash=hashSecureActionToken(token,this.actionSecret());const record=this.database.getSecureActionToken(hash);if(!record||record.revokedAt||Date.parse(record.expiresAt)<=Date.now()||(record.singleUse&&record.usedAt))throw new Error("ACTION_LINK_INVALID_OR_EXPIRED");const request=record.attentionRequestId?this.database.getAttentionRequest(record.attentionRequestId):null;if(!request||request.status!=="PENDING")throw new Error("ACTION_NOT_PENDING");const proposed=draftObject(request.proposedAction);const item=record.caseId?this.database.getCase(record.caseId):null;const call=record.callId?this.calls.snapshot(record.callId):null;return{tokenState:"VALID",actionType:record.actionType,attention:{id:request.id,tier:request.tier,status:request.status,question:request.question,choices:request.choices as Array<{id:string;shortCode:string;label:string;effect:string}>,expiresAt:request.expiresAt,secureActionRequired:true},case:item,call,representativeRequest:String(proposed.representativeRequest??request.question),currentGoal:String(proposed.currentGoal??item?.brief?.desiredOutcome??""),proposedAction:String(proposed.proposedAction??"Review the representative's request"),consequences:String(proposed.consequences??"The call will remain paused until you decide."),amountCents:typeof proposed.amountCents==="number"?proposed.amountCents:null,expiresAt:record.expiresAt,approvalPermitted:proposed.approvalPermitted!==false};}
-
-  async resolveSecureAction(token:string,input:{decision:"APPROVE"|"REJECT";confirmation?:"CONFIRM";replacement?:string}):Promise<MessagingThreadSnapshot>{
-    const detail=this.secureAction(token);
-    if(detail.attention.tier==="MATERIAL"&&input.decision==="APPROVE"&&input.confirmation!=="CONFIRM")throw new Error("MATERIAL_CONFIRMATION_REQUIRED");
-    if(input.decision==="APPROVE"&&!detail.approvalPermitted)throw new Error("CONDITIONAL_AUTHORITY_DENIED");
-    const hash=hashSecureActionToken(token,this.actionSecret());
-    const tokenRecord=this.database.getSecureActionToken(hash)!;
-    const request=this.database.getAttentionRequest(tokenRecord.attentionRequestId!)!;
-    const proposed=draftObject(request.proposedAction);
-    const approvalId=String(proposed.approvalId??"");
-    if(!tokenRecord.callId||!approvalId)throw new Error("ACTION_BINDING_INVALID");
-    const reservationId=randomUUID();
-    const reserved=this.database.beginSecureAttentionResolution({tokenHash:hash,actionType:tokenRecord.actionType,threadId:tokenRecord.threadId,caseId:tokenRecord.caseId,callId:tokenRecord.callId,attentionRequestId:request.id,reservationId});
-    if(!reserved)throw new Error("ACTION_LINK_INVALID_OR_EXPIRED");
-    try{
-      if(input.decision==="APPROVE")await this.calls.approve(tokenRecord.callId,approvalId,input.replacement,input.confirmation==="CONFIRM");
-      else await this.calls.reject(tokenRecord.callId,approvalId,input.replacement);
-      const resolved=this.database.finishSecureAttentionResolution({id:request.id,threadId:tokenRecord.threadId,callId:tokenRecord.callId,reservationId,resolution:{decision:input.decision,channel:"WEB",tokenId:tokenRecord.id}});
-      if(!resolved)throw new Error("STALE_ATTENTION_REQUEST");
-      this.database.insertSemanticCallEvent({id:randomUUID(),threadId:tokenRecord.threadId,caseId:tokenRecord.caseId!,callId:tokenRecord.callId,eventType:"ATTENTION_RESOLVED",semanticKey:`ATTENTION_RESOLVED:${request.id}`,payload:{attentionRequestId:request.id,tier:detail.attention.tier,decision:input.decision,channel:"WEB"},occurredAt:new Date().toISOString()});
-      this.database.updateSupportThread(tokenRecord.threadId,{state:"CALL_ACTIVE",pendingAttentionRequestId:null});
-      const resolutionVerb=input.decision==="APPROVE"?"approved":"rejected";
-      await this.reply(this.database.getSupportThread(tokenRecord.threadId)!,`${detail.attention.tier.toLowerCase()} decision ${resolutionVerb} in the secure app.`,`secure-resolution:${request.id}`,"WEB");
+  private async flushThroughInbound(messageId: string): Promise<void> {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 0));
       await this.flush();
-      return this.snapshot();
-    }catch(error){
-      this.database.cancelSecureAttentionResolution({id:request.id,threadId:tokenRecord.threadId,callId:tokenRecord.callId,reservationId,reason:safeError(error)});
+      const message = this.database.getInboundMessage(messageId);
+      if (message && new Set(["COMPLETED", "REJECTED", "DEAD_LETTER"]).has(message.processingState)) return;
+    }
+    throw new Error("INBOUND_PROCESSING_DID_NOT_SETTLE");
+  }
+
+  private async checkAttentionTimeout(): Promise<void> {
+    const thread = this.database.getActiveSupportThread(PRINCIPAL_ID);
+    if (!thread?.pendingAttentionRequestId) return;
+    const request = this.database.getAttentionRequest(thread.pendingAttentionRequestId);
+    if (!request || request.status !== "PENDING" || request.resolution !== null) return;
+    const now = Date.now();
+    const reminderAt = Date.parse(request.createdAt) + this.config.SMS_DECISION_TIMEOUT_SECONDS * 1_000;
+    if (now >= Date.parse(request.expiresAt)) {
+      const expired = this.database.resolveAttentionRequest({
+        id: request.id,
+        expectedCallId: request.callId,
+        resolution: { reason: "USER_UNAVAILABLE", approvalInferred: false },
+        now: new Date(now).toISOString(),
+      });
+      if (!expired) return;
+      if (
+        request.callId &&
+        this.database.getCall(request.callId) &&
+        !new Set(["COMPLETED", "FAILED"]).has(this.database.getCall(request.callId)!.state)
+      )
+        await this.calls.userUnavailable(request.callId);
+      await this.reply(
+        this.database.getSupportThread(thread.id)!,
+        "The decision deadline passed. Liaison did not infer approval and ended the call unresolved.",
+        `attention-expired:${request.id}`,
+        "WEB",
+      );
+      return;
+    }
+    if (
+      now >= reminderAt &&
+      request.callId &&
+      !this.database.getSemanticCallEvent(request.callId, `ATTENTION_REMINDER:${request.id}`)
+    ) {
+      this.database.insertSemanticCallEvent({
+        id: randomUUID(),
+        threadId: thread.id,
+        caseId: request.caseId!,
+        callId: request.callId,
+        eventType: "ATTENTION_REMINDER",
+        semanticKey: `ATTENTION_REMINDER:${request.id}`,
+        payload: { attentionRequestId: request.id },
+        occurredAt: new Date(now).toISOString(),
+      });
+      const remaining = Math.max(1, Math.ceil((Date.parse(request.expiresAt) - now) / 1_000));
+      await this.reply(
+        thread,
+        `Reminder: a decision is still required. ${remaining} seconds remain. Silence will not be treated as approval.`,
+        `attention-reminder:${request.id}`,
+        "WEB",
+      );
+    }
+  }
+
+  private async processInboundBatch(): Promise<void> {
+    const items = this.database.claimMessagingWork({
+      workerId: this.workerId,
+      now: new Date().toISOString(),
+      leaseSeconds: 30,
+      limit: 20,
+    });
+    for (const item of items) {
+      try {
+        if (!item.inboundMessageId) throw new Error("INBOUND_WORK_MISSING_MESSAGE");
+        const message = this.database.getInboundMessage(item.inboundMessageId);
+        if (!message) throw new Error("INBOUND_MESSAGE_NOT_FOUND");
+        await this.processInbound(message, item.payload as WorkPayload);
+        this.database.completeMessagingWork(item.id, this.workerId);
+      } catch (error) {
+        const text = safeError(error);
+        if (item.attemptCount >= 3) this.database.deadLetterMessagingWork(item.id, this.workerId, text);
+        else
+          this.database.retryMessagingWork(
+            item.id,
+            this.workerId,
+            text,
+            new Date(Date.now() + Math.min(30_000, item.attemptCount * 1_000)).toISOString(),
+          );
+      }
+    }
+  }
+  private async processOutboundBatch(): Promise<void> {
+    const items = this.database.claimOutboundMessages({
+      workerId: this.workerId,
+      now: new Date().toISOString(),
+      leaseSeconds: 45,
+      limit: 20,
+    });
+    for (const message of items) {
+      let dispatched = false;
+      try {
+        const thread = this.database.getSupportThread(message.threadId);
+        if (!thread) throw new Error("THREAD_DELETED");
+        if (message.providerKind === "TWILIO_SMS" && thread.messagingOptState === "OPTED_OUT")
+          throw new Error("OWNER_OPTED_OUT");
+        let adapter: MessagingAdapter;
+        if (message.providerKind === "TWILIO_SMS") {
+          if (!this.smsAdapter) throw new Error("SMS_ADAPTER_MISSING");
+          adapter = this.smsAdapter;
+        } else adapter = this.webAdapter;
+        const body = this.transientOutboundBodies.get(message.id) ?? message.redactedBody;
+        const hasTransientMarker = /\[(?:CALL_CODE|SECURE_ACTION_TOKEN)\]/.test(message.redactedBody);
+        if (hasTransientMarker && !this.transientOutboundBodies.has(message.id))
+          throw new Error("TRANSIENT_DELIVERY_MATERIAL_LOST_AFTER_RESTART");
+        dispatched = true;
+        const result = await adapter.sendText({ messageId: message.id, to: message.recipient, body });
+        this.database.markOutboundSent({
+          id: message.id,
+          workerId: this.workerId,
+          providerMessageId: result.providerMessageId,
+          deliveryState: adapter.kind === "WEB" ? "DELIVERED" : providerState(result.status),
+        });
+      } catch (error) {
+        const code = safeError(error);
+        if (message.providerKind === "TWILIO_SMS" && dispatched)
+          this.database.markOutboundAmbiguous(message.id, this.workerId, code);
+        else this.database.deadLetterOutboundMessage(message.id, this.workerId, code);
+      }
+    }
+  }
+
+  private async processInbound(message: InboundMessageRecord, payload: WorkPayload): Promise<void> {
+    const thread = this.database.getSupportThread(message.threadId);
+    if (!thread) throw new Error("THREAD_NOT_FOUND");
+    if (message.errorCode?.startsWith("PROHIBITED_SECRET")) {
+      if (!payload.suppressProviderReply)
+        await this.reply(thread, prohibitedSmsNotice, `secret:${message.id}`, message.providerKind);
+      return;
+    }
+    if (payload.mediaRejected) {
+      if (!payload.suppressProviderReply)
+        await this.reply(
+          thread,
+          `Media attachments are not supported and were not downloaded. Use the secure web app: ${this.config.PUBLIC_BASE_URL}/`,
+          `mms:${message.id}`,
+          message.providerKind,
+        );
+      return;
+    }
+    const effectiveBody = payload.transientCallCode
+      ? this.transientInboundBodies.get(message.id)
+      : message.redactedBody;
+    if (payload.transientCallCode && !effectiveBody) {
+      await this.reply(
+        thread,
+        "That call code is no longer available after the server restarted. Review and approve the current plan to issue a fresh code.",
+        `call-transient-lost:${message.id}`,
+        message.providerKind,
+      );
+      return;
+    }
+    const effectiveMessage =
+      effectiveBody === message.redactedBody ? message : { ...message, redactedBody: effectiveBody! };
+    const command = parseMessagingCommand(effectiveMessage.redactedBody);
+    if (command) {
+      await this.handleCommand(thread, effectiveMessage, command, payload);
+      this.transientInboundBodies.delete(message.id);
+      return;
+    }
+    if (thread.messagingOptState === "OPTED_OUT") return;
+    if (new Set(["COMPLETED", "FAILED", "CANCELLED"]).has(thread.state)) {
+      await this.reply(
+        thread,
+        "This support request is closed. Send NEW to begin another support request.",
+        `terminal-guidance:${message.id}`,
+        message.providerKind,
+        ["NEW"],
+      );
+      return;
+    }
+    const checkpoint = checkpointFromDraft(thread.draft);
+    if (checkpoint?.sourceMessageId === message.id) {
+      await this.resumePlanCheckpoint(thread, supportDraftSchema.parse(thread.draft), checkpoint, message.providerKind);
+      return;
+    }
+    const pendingDraft = supportDraftSchema.safeParse(thread.draft);
+    if (pendingDraft.success && pendingDraft.data.pendingPlanSourceMessageId === message.id) {
+      await this.createPlanFromDraft(thread, pendingDraft.data, message.providerKind, message.id);
+      return;
+    }
+    if (thread.state === "CALL_ACTIVE" || thread.state === "AWAITING_USER_DECISION") {
+      if (thread.state === "AWAITING_USER_DECISION") {
+        await this.reply(
+          thread,
+          "A decision is pending. Use the current A/B/C choice or secure review link; other instructions cannot bypass it.",
+          `decision-pending:${message.id}`,
+          message.providerKind,
+        );
+        return;
+      }
+      const intent = await this.models.classifyMessagingIntent({
+        threadState: thread.state,
+        message: effectiveMessage.redactedBody,
+      });
+      const instruction =
+        intent.intent === "PRIVATE_CALL_INSTRUCTION"
+          ? intent.privateInstruction
+          : intent.intent === "ADD_CONTEXT"
+            ? intent.contextToAdd
+            : effectiveMessage.redactedBody;
+      if (thread.activeCallId)
+        this.calls.privateInstruction(thread.activeCallId, instruction ?? effectiveMessage.redactedBody);
+      await this.reply(
+        thread,
+        "Private instruction added. Liaison will apply it only within the approved plan and hard safety limits.",
+        `private:${message.id}`,
+        message.providerKind,
+      );
+      return;
+    }
+    if (
+      /^change (?:the )?(?:goal|desired outcome)\s+(?:to|:)\s*/i.test(effectiveMessage.redactedBody) &&
+      thread.currentCaseId
+    ) {
+      await this.editGoal(thread, effectiveMessage);
+      return;
+    }
+    const draft = collectSupportDraft(thread.draft, effectiveMessage.redactedBody, this.config.OWNER_DISPLAY_NAME);
+    let working = thread;
+    if (working.state === "IDLE") working = this.moveThread(working, "COLLECTING_ISSUE", { draft });
+    this.moveThread(working, draft.awaitingField ? "AWAITING_INFORMATION" : "PLAN_DRAFTED", { draft });
+    if (draft.awaitingField) {
+      await this.reply(
+        this.database.getSupportThread(thread.id)!,
+        clarificationFor(draft.awaitingField),
+        `clarify:${message.id}`,
+        message.providerKind,
+      );
+      return;
+    }
+    const preparedDraft = supportDraftSchema.parse({ ...draft, pendingPlanSourceMessageId: message.id });
+    const prepared = this.database.updateSupportThread(thread.id, { draft: preparedDraft })!;
+    await this.createPlanFromDraft(prepared, preparedDraft, message.providerKind, message.id);
+  }
+
+  private async handleCommand(
+    thread: SupportThreadRecord,
+    message: InboundMessageRecord,
+    command: MessagingCommand,
+    payload: WorkPayload,
+  ): Promise<void> {
+    const reply = async (text: string, key: string) => {
+      if (!payload.suppressProviderReply)
+        await this.reply(this.database.getSupportThread(thread.id)!, text, key, message.providerKind);
+    };
+    if (command.kind === "STOP") {
+      this.database.optOutSupportThreadAndCancelOutbound(thread.id, { reason: "OWNER_OPTED_OUT" });
+      return;
+    }
+    if (command.kind === "START") {
+      this.database.updateSupportThread(thread.id, { messagingOptState: "OPTED_IN" });
+      await reply(
+        "Messaging is active. Send NEW to begin, or describe the support issue in your own words. Do not text account credentials.",
+        `start:${message.id}`,
+      );
+      return;
+    }
+    if (thread.messagingOptState === "OPTED_OUT") return;
+    if (command.kind === "HELP") {
+      await reply(`${conciseCommandHelp}\nSecure app: ${this.config.PUBLIC_BASE_URL}/`, `help:${message.id}`);
+      return;
+    }
+    if (command.kind === "STATUS") {
+      await reply(this.statusText(thread), `status:${message.id}`);
+      return;
+    }
+    if (command.kind === "LINK") {
+      await reply(`Open the secure Liaison app: ${this.config.PUBLIC_BASE_URL}/`, `link:${message.id}`);
+      return;
+    }
+    if (command.kind === "NEW") {
+      if (ACTIVE_STATES.has(thread.state)) {
+        await reply("A call is active. Finish or hang up before starting a new case.", `new-blocked:${message.id}`);
+        return;
+      }
+      this.database.revokeCallAuthorizations({ threadId: thread.id, reason: "NEW_CASE" });
+      this.database.updateSupportThread(thread.id, { isActive: false });
+      const fresh = this.thread();
+      this.moveThread(fresh, "COLLECTING_ISSUE", { draft: {} });
+      await this.reply(
+        this.database.getSupportThread(fresh.id)!,
+        "Describe the company, official US support number, what happened, and the exact outcome you want. Liaison will ask only for missing details.",
+        `new:${message.id}`,
+        message.providerKind,
+      );
+      return;
+    }
+    if (command.kind === "EDIT") {
+      if (ACTIVE_STATES.has(thread.state)) {
+        await reply(
+          `A call is active. Use the secure cockpit for steering: ${this.config.PUBLIC_BASE_URL}/`,
+          `edit-active:${message.id}`,
+        );
+        return;
+      }
+      if (thread.currentCaseId)
+        this.database.revokeCallAuthorizations({ caseId: thread.currentCaseId, reason: "PLAN_EDIT_REQUESTED" });
+      this.database.updateSupportThread(thread.id, {
+        state: thread.currentCaseId ? "PLAN_DRAFTED" : "COLLECTING_ISSUE",
+        approvedPlanVersion: null,
+      });
+      await reply(
+        thread.currentCaseId
+          ? `Edit the plan in the secure app: ${this.config.PUBLIC_BASE_URL}/`
+          : `Send the support request in your own words.`,
+        `edit:${message.id}`,
+      );
+      return;
+    }
+    if (command.kind === "CANCEL") {
+      if (ACTIVE_STATES.has(thread.state)) {
+        await reply("CANCEL does not end a live call. Send HANGUP, then HANGUP YES.", `cancel-active:${message.id}`);
+        return;
+      }
+      this.database.revokeCallAuthorizations({ threadId: thread.id, reason: "CASE_CANCELLED" });
+      this.database.updateSupportThread(thread.id, {
+        state: "CANCELLED",
+        draft: null,
+        approvedPlanVersion: null,
+        isActive: false,
+      });
+      const fresh = this.thread();
+      await this.reply(
+        fresh,
+        "The draft was cancelled. Send NEW when you want to begin another support request.",
+        `cancel:${message.id}`,
+        message.providerKind,
+      );
+      return;
+    }
+    if (command.kind === "MODE") {
+      if (ACTIVE_STATES.has(thread.state)) {
+        await reply(
+          "Autonomy mode cannot change during an active call. Pause or finish the call first.",
+          `mode-active:${message.id}`,
+        );
+        return;
+      }
+      if (thread.currentCaseId)
+        this.database.revokeCallAuthorizations({ caseId: thread.currentCaseId, reason: "AUTONOMY_CHANGED" });
+      const next = this.database.updateSupportThread(thread.id, {
+        autonomyMode: command.mode,
+        approvedPlanVersion: null,
+        state: thread.currentCaseId ? "PLAN_DRAFTED" : thread.state,
+      })!;
+      await reply(
+        `${command.mode} mode selected. Hard-denied actions remain denied. ${thread.currentCaseId ? "Review and approve the plan again." : ""}`.trim(),
+        `mode:${message.id}`,
+      );
+      void next;
+      return;
+    }
+    if (command.kind === "APPROVE_PLAN") {
+      await this.approvePlan(thread, message);
+      return;
+    }
+    if (command.kind === "CALL") {
+      await this.authorizeCall(thread, message, command.code);
+      return;
+    }
+    if (command.kind === "PAUSE") {
+      if (!thread.activeCallId) {
+        await reply("There is no active call to pause.", `pause-none:${message.id}`);
+        return;
+      }
+      await this.calls.pause(thread.activeCallId);
+      await reply(
+        "Autonomous substantive replies are paused. Transcription continues. Reply RESUME to continue.",
+        `pause:${message.id}`,
+      );
+      return;
+    }
+    if (command.kind === "RESUME") {
+      if (!thread.activeCallId) {
+        await reply("There is no active call to resume.", `resume-none:${message.id}`);
+        return;
+      }
+      if (thread.pendingAttentionRequestId || thread.state === "AWAITING_USER_DECISION") {
+        await reply(
+          "A blocking decision is pending. Resolve it through A/B/C or the secure review; RESUME cannot bypass it.",
+          `resume-pending:${message.id}`,
+        );
+        return;
+      }
+      await this.calls.resume(thread.activeCallId);
+      await reply("Liaison resumed after reviewing the intervening transcript context.", `resume:${message.id}`);
+      return;
+    }
+    if (command.kind === "EXACT_SPEECH") {
+      if (!thread.activeCallId) {
+        await reply("There is no active call for exact speech.", `say-none:${message.id}`);
+        return;
+      }
+      if (thread.state === "AWAITING_USER_DECISION") {
+        await reply(
+          "Exact speech cannot bypass a pending sensitive or material decision. Use the secure review link.",
+          `say-pending:${message.id}`,
+        );
+        return;
+      }
+      await this.calls.exactText(thread.activeCallId, command.text);
+      await reply("Your exact text was spoken after deterministic safety validation.", `say:${message.id}`);
+      return;
+    }
+    if (command.kind === "HANGUP_REQUEST") {
+      this.database.updateSupportThread(thread.id, {
+        draft: { ...draftObject(thread.draft), hangupRequestedAt: new Date().toISOString() },
+      });
+      await reply("Reply HANGUP YES within 2 minutes to end the live call.", `hangup-request:${message.id}`);
+      return;
+    }
+    if (command.kind === "HANGUP_CONFIRM") {
+      const requested = String(draftObject(thread.draft).hangupRequestedAt ?? "");
+      if (!thread.activeCallId || !requested || Date.now() - Date.parse(requested) > 120_000) {
+        await reply("No current hang-up confirmation is pending. Send HANGUP first.", `hangup-stale:${message.id}`);
+        return;
+      }
+      const ended = await this.calls.hangup(thread.activeCallId);
+      if (!["COMPLETED", "FAILED"].includes(ended.state) || !ended.outcome)
+        throw new Error("CALL_TERMINATION_NOT_CONFIRMED");
+      await reply("The call was ended at your request.", `hangup:${message.id}`);
+      return;
+    }
+    if (command.kind === "CHOICE") {
+      await this.resolveSmsChoice(thread, message, command.code);
+      return;
+    }
+  }
+
+  private async createPlanFromDraft(
+    thread: SupportThreadRecord,
+    draft: SupportDraft,
+    provider: "WEB" | "TWILIO_SMS" | "SIMULATOR",
+    sourceId: string,
+  ): Promise<void> {
+    const risks = detectHighRisk(`${draft.companyName}\n${draft.issueDescription}\n${draft.desiredOutcome}`);
+    if (risks.length) {
+      this.database.updateSupportThread(thread.id, { state: "FAILED" });
+      await this.reply(
+        thread,
+        `Liaison cannot handle this request because it may involve an excluded high-risk category: ${risks.join(", ")}. No call was started.`,
+        `risk:${sourceId}`,
+        provider,
+      );
+      return;
+    }
+    const existing =
+      thread.currentCaseId &&
+      new Set(["PLAN_DRAFTED", "AWAITING_PLAN_APPROVAL", "AWAITING_AVAILABILITY"]).has(thread.state)
+        ? this.database.getCase(thread.currentCaseId)
+        : null;
+    if (existing?.brief) {
+      this.database.revokeCallAuthorizations({ caseId: existing.id, reason: "PLAN_REVISED_BY_MESSAGE" });
+      const checkpoint: PlanCheckpoint = {
+        sourceMessageId: sourceId,
+        caseId: existing.id,
+        operation: "REVISE",
+        basePlanVersion: existing.brief.version,
+      };
+      const checkpointDraft = supportDraftSchema.parse({ ...draft, planCheckpoint: checkpoint });
+      const bound = this.database.updateSupportThread(thread.id, {
+        currentCaseId: existing.id,
+        state: "PLAN_DRAFTED",
+        draft: checkpointDraft,
+        approvedPlanVersion: null,
+      })!;
+      await this.resumePlanCheckpoint(bound, checkpointDraft, checkpoint, provider);
+      return;
+    }
+    const item = await this.calls.createCase(
+      {
+        userFirstName: draft.userFirstName!,
+        companyName: draft.companyName!,
+        phoneNumber: draft.phoneNumberE164!,
+        issueDescription: padIssue(draft.issueDescription!),
+        chronologyText: "",
+        desiredOutcome: draft.desiredOutcome!,
+        acceptableAlternativesText: draft.acceptableAlternatives.join("\n"),
+        unacceptableOutcomesText: draft.unacceptableOutcomes.join("\n"),
+        knownFactsText: draft.knownFacts.join("\n"),
+        disclosures: [],
+        authority: { ...defaultAuthority, forbiddenActions: [...new Set(draft.unacceptableOutcomes)].slice(0, 30) },
+        officialNumberConfirmed: true,
+        authorizedAccountConfirmed: true,
+        lowRiskConfirmed: true,
+      },
+      { idempotencyKey: `messaging-plan:${thread.id}:${sourceId}` },
+    );
+    const checkpoint: PlanCheckpoint = {
+      sourceMessageId: sourceId,
+      caseId: item.id,
+      operation: "CREATE",
+      basePlanVersion: 0,
+    };
+    const checkpointDraft = supportDraftSchema.parse({ ...draft, planCheckpoint: checkpoint });
+    const bound = this.database.updateSupportThread(thread.id, {
+      currentCaseId: item.id,
+      state: "PLAN_DRAFTED",
+      draft: checkpointDraft,
+      approvedPlanVersion: null,
+    })!;
+    await this.resumePlanCheckpoint(bound, checkpointDraft, checkpoint, provider);
+  }
+
+  private async resumePlanCheckpoint(
+    thread: SupportThreadRecord,
+    draft: SupportDraft,
+    checkpoint: PlanCheckpoint,
+    provider: "WEB" | "TWILIO_SMS" | "SIMULATOR",
+  ): Promise<void> {
+    const item = this.database.getCase(checkpoint.caseId);
+    if (!item || thread.currentCaseId !== item.id) throw new Error("PLAN_CHECKPOINT_CASE_MISMATCH");
+    let brief = item.brief;
+    if (checkpoint.operation === "CREATE") {
+      if (brief && brief.version !== 1) throw new Error("PLAN_CHECKPOINT_VERSION_CONFLICT");
+      brief ??= await this.calls.generatePlan(item.id);
+    } else {
+      if (!brief || brief.version < checkpoint.basePlanVersion) throw new Error("PLAN_CHECKPOINT_VERSION_CONFLICT");
+      if (brief.version === checkpoint.basePlanVersion)
+        brief = this.calls.savePlan(item.id, this.revisedPlan(brief, draft));
+      else if (brief.version !== checkpoint.basePlanVersion + 1) throw new Error("PLAN_CHECKPOINT_VERSION_CONFLICT");
+    }
+    if (checkpoint.committedPlanVersion !== undefined && checkpoint.committedPlanVersion !== brief.version)
+      throw new Error("PLAN_CHECKPOINT_VERSION_CONFLICT");
+    const committedDraft = supportDraftSchema.parse({
+      ...draft,
+      pendingPlanSourceMessageId: undefined,
+      planCheckpoint: { ...checkpoint, committedPlanVersion: brief.version },
+    });
+    this.database.updateSupportThread(thread.id, {
+      currentCaseId: item.id,
+      state: "AWAITING_PLAN_APPROVAL",
+      draft: committedDraft,
+      approvedPlanVersion: null,
+    });
+    const rules =
+      checkpoint.operation === "REVISE"
+        ? canonicalRuntimeRules(this.database.listConditionalAuthorityRules(thread.id, item.id), brief.version)
+        : this.replaceConditionalRules(thread.id, item.id, brief.version, committedDraft);
+    const required = ["APPROVE PLAN", "EDIT", this.config.PUBLIC_BASE_URL, ...this.planRuleFragments(rules)];
+    await this.reply(
+      this.database.getSupportThread(thread.id)!,
+      this.planSummary(brief, thread.autonomyMode, rules),
+      `plan:${item.id}:v${brief.version}`,
+      provider,
+      required,
+    );
+  }
+
+  private revisedPlan(brief: CallBrief, draft: SupportDraft): CallBrief {
+    return {
+      ...brief,
+      companyName: draft.companyName!,
+      phoneNumberE164: draft.phoneNumberE164!,
+      userFirstName: draft.userFirstName!,
+      title: `${draft.companyName} support request`.slice(0, 160),
+      issueSummary: padIssue(draft.issueDescription!).slice(0, 4_000),
+      desiredOutcome: draft.desiredOutcome!,
+      acceptableAlternatives: draft.acceptableAlternatives,
+      unacceptableOutcomes: draft.unacceptableOutcomes,
+      knownFacts: draft.knownFacts,
+      authority: { ...brief.authority, forbiddenActions: [...new Set(draft.unacceptableOutcomes)].slice(0, 30) },
+    };
+  }
+
+  private async approvePlan(thread: SupportThreadRecord, message: InboundMessageRecord): Promise<void> {
+    const item = thread.currentCaseId ? this.database.getCase(thread.currentCaseId) : null;
+    if (!item?.brief || !new Set(["AWAITING_PLAN_APPROVAL", "PLAN_DRAFTED"]).has(thread.state)) {
+      await this.reply(
+        thread,
+        "There is no complete plan ready for approval yet.",
+        `approve-none:${message.id}`,
+        message.providerKind,
+      );
+      return;
+    }
+    const code = generateCallAuthorizationCode();
+    const hash = hashCallAuthorization({
+      secret: this.callSecret(),
+      threadId: thread.id,
+      caseId: item.id,
+      planVersion: item.brief.version,
+      destination: item.brief.phoneNumberE164,
+      telephonyMode: this.config.TELEPHONY_MODE,
+      code,
+    });
+    const authorizationId = randomUUID();
+    this.database.createCallAuthorization({
+      id: authorizationId,
+      threadId: thread.id,
+      caseId: item.id,
+      planVersion: item.brief.version,
+      destinationE164: item.brief.phoneNumberE164,
+      telephonyMode: this.config.TELEPHONY_MODE,
+      codeHash: hash,
+      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    });
+    this.moveThread(this.database.getSupportThread(thread.id)!, "AWAITING_AVAILABILITY");
+    const rawBody = [
+      `Plan ${item.brief.version} approved.`,
+      `When you are available for up to ${this.config.MAX_CALL_DURATION_MINUTES} minutes, reply exactly CALL ${code}.`,
+      `The code expires in 10 minutes and works once. Editing the plan, destination, call mode, or autonomy invalidates it.`,
+    ].join("\n");
+    const durableBody = rawBody.replace(code, "[CALL_CODE]");
+    await this.reply(
+      this.database.getSupportThread(thread.id)!,
+      durableBody,
+      `auth:${authorizationId}`,
+      message.providerKind,
+      ["CALL [CALL_CODE]"],
+      rawBody,
+      [`CALL ${code}`],
+    );
+  }
+
+  private async authorizeCall(thread: SupportThreadRecord, message: InboundMessageRecord, code: string): Promise<void> {
+    const item = thread.currentCaseId ? this.database.getCase(thread.currentCaseId) : null;
+    if (!item?.brief || item.approvedVersion !== item.brief.version) {
+      await this.reply(
+        thread,
+        "That call code is invalid or stale. Review and approve the current plan again.",
+        `call-invalid:${message.id}`,
+        message.providerKind,
+      );
+      return;
+    }
+    const hash = hashCallAuthorization({
+      secret: this.callSecret(),
+      threadId: thread.id,
+      caseId: item.id,
+      planVersion: item.brief.version,
+      destination: item.brief.phoneNumberE164,
+      telephonyMode: this.config.TELEPHONY_MODE,
+      code,
+    });
+    const consumed = this.database.consumeCallAuthorization({
+      threadId: thread.id,
+      caseId: item.id,
+      planVersion: item.brief.version,
+      destinationE164: item.brief.phoneNumberE164,
+      telephonyMode: this.config.TELEPHONY_MODE,
+      codeHash: hash,
+    });
+    if (!consumed) {
+      await this.reply(
+        thread,
+        "That call code is invalid, expired, stale, or already used. No call was started.",
+        `call-invalid:${message.id}`,
+        message.providerKind,
+      );
+      return;
+    }
+    this.moveThread(this.database.getSupportThread(thread.id)!, "CALL_STARTING");
+    try {
+      const call =
+        this.config.TELEPHONY_MODE === "simulator"
+          ? await this.calls.startSimulation(item.id, "messaging-complete", this.config.NODE_ENV === "test")
+          : await this.calls.startLive(item.id, consumed.id);
+      this.calls.setAutonomyMode(call.id, thread.autonomyMode);
+      this.database.updateSupportThread(thread.id, { activeCallId: call.id, state: "CALL_ACTIVE" });
+      await this.reply(
+        this.database.getSupportThread(thread.id)!,
+        `Calling ${item.companyName} now. Liaison will send only important changes. Reply STATUS for an update, PAUSE to stop autonomous replies, or HANGUP to request ending the call.`,
+        `call-started:${call.id}`,
+        message.providerKind,
+      );
+    } catch (error) {
+      const active = this.database.getActiveCall();
+      const ambiguous =
+        active?.mode === "TWILIO" &&
+        active.case_id === item.id &&
+        active.state === "ENDING" &&
+        Boolean(active.terminal_reason?.startsWith("AMBIGUOUS_"));
+      this.database.updateSupportThread(
+        thread.id,
+        ambiguous ? { state: "CALL_ENDING", activeCallId: active.id } : { state: "FAILED" },
+      );
+      await this.reply(
+        this.database.getSupportThread(thread.id)!,
+        ambiguous
+          ? "The provider may have accepted the call, but Liaison did not receive confirmation. No retry will occur and another call is blocked. Check Twilio Calls and end any matching call; a signed provider callback can reconcile this state."
+          : `The call could not be started safely: ${safeError(error)} No automatic retry will occur.`,
+        `call-failed:${message.id}`,
+        message.providerKind,
+      );
+    }
+  }
+
+  private async editGoal(thread: SupportThreadRecord, message: InboundMessageRecord): Promise<void> {
+    const item = this.database.getCase(thread.currentCaseId!);
+    if (!item?.brief) return;
+    const desired = message.redactedBody.replace(/^change (?:the )?(?:goal|desired outcome)\s+(?:to|:)\s*/i, "").trim();
+    if (desired.length < 3) {
+      await this.reply(
+        thread,
+        "State the revised outcome after 'Change goal to'.",
+        `edit-invalid:${message.id}`,
+        message.providerKind,
+      );
+      return;
+    }
+    const brief = this.calls.savePlan(item.id, { ...item.brief, desiredOutcome: desired });
+    this.database.updateSupportThread(thread.id, { state: "AWAITING_PLAN_APPROVAL", approvedPlanVersion: null });
+    const draft = { ...draftObject(thread.draft), desiredOutcome: desired } as SupportDraft;
+    const rules = this.replaceConditionalRules(thread.id, item.id, brief.version, draft);
+    await this.reply(
+      this.database.getSupportThread(thread.id)!,
+      this.planSummary(brief, thread.autonomyMode, rules),
+      `plan-edit:${item.id}:v${brief.version}`,
+      message.providerKind,
+      ["APPROVE PLAN", "EDIT", this.config.PUBLIC_BASE_URL, ...this.planRuleFragments(rules)],
+    );
+  }
+
+  private async resolveSmsChoice(
+    thread: SupportThreadRecord,
+    message: InboundMessageRecord,
+    code: "A" | "B" | "C",
+  ): Promise<void> {
+    const request = thread.pendingAttentionRequestId
+      ? this.database.getAttentionRequest(thread.pendingAttentionRequestId)
+      : thread.activeCallId
+        ? this.database.getPendingAttentionRequest(thread.activeCallId)
+        : null;
+    if (!request || request.tier !== "LOW_CONSEQUENCE" || !request.callId) {
+      await this.reply(
+        thread,
+        "There is no current SMS-eligible choice. Sensitive or material decisions must be reviewed in the secure app.",
+        `choice-none:${message.id}`,
+        message.providerKind,
+      );
+      return;
+    }
+    const choice = (request.choices as Array<{ id: string; shortCode: string; label: string; effect: string }>).find(
+      (item) => item.shortCode === code,
+    );
+    if (!choice) {
+      await this.reply(
+        thread,
+        "That choice is not available for the current decision.",
+        `choice-invalid:${message.id}`,
+        message.providerKind,
+      );
+      return;
+    }
+    const reservationId = randomUUID();
+    const reserved = this.database.reserveLowConsequenceAttention({
+      id: request.id,
+      expectedCallId: request.callId,
+      reservationId,
+      choiceId: choice.id,
+      shortCode: code,
+      messageId: message.id,
+    });
+    if (!reserved) {
+      await this.reply(
+        thread,
+        "That decision expired, was already resolved, or is being executed. It was not executed again.",
+        `choice-stale:${message.id}`,
+        message.providerKind,
+      );
+      return;
+    }
+    try {
+      if (code === "B")
+        await this.calls.exactTextForReservedAttention(
+          request.callId,
+          request.id,
+          "Could you please give an estimated wait time?",
+        );
+      if (code === "C")
+        await this.calls.exactTextForReservedAttention(
+          request.callId,
+          request.id,
+          "Could you please connect me with a supervisor?",
+        );
+      await this.calls.resumeReservedAttention(request.callId, request.id);
+      const resolved = this.database.finishLowConsequenceAttention({
+        id: request.id,
+        expectedCallId: request.callId,
+        reservationId,
+        resolution: {
+          executionState: "SUCCEEDED",
+          choiceId: choice.id,
+          shortCode: code,
+          messageId: message.id,
+          channel: "SMS",
+        },
+      });
+      if (!resolved) throw new Error("LOW_CONSEQUENCE_FINALIZATION_FAILED");
+      this.database.updateSupportThread(thread.id, { state: "CALL_ACTIVE", pendingAttentionRequestId: null });
+      await this.reply(
+        this.database.getSupportThread(thread.id)!,
+        `${choice.label}. The call is continuing within the approved plan.`,
+        `choice:${request.id}:${code}`,
+        message.providerKind,
+      );
+      await this.calls.continueAfterReservedAttention(request.callId);
+    } catch (error) {
+      this.database.cancelLowConsequenceAttention({
+        id: request.id,
+        expectedCallId: request.callId,
+        reservationId,
+        reason: safeError(error),
+      });
+      try {
+        await this.calls.userUnavailable(request.callId);
+      } catch (terminationError) {
+        this.recordProjectionFailure(null, terminationError);
+      }
+      await this.reply(
+        this.database.getSupportThread(thread.id)!,
+        "The selected call action could not be confirmed. Liaison did not retry it and safely ended or paused the call for operator review.",
+        `choice-failed:${request.id}:${code}`,
+        message.providerKind,
+      );
       throw error;
     }
   }
 
-  private async handleCallEvent(event:ApplicationCallEvent):Promise<void>{if(!event.callId||!event.caseId)return;const thread=this.database.getActiveSupportThread(PRINCIPAL_ID);if(!thread||thread.currentCaseId!==event.caseId)return;
-    if(event.type==="CALL_CONNECTED"){await this.sendSemantic(thread,"Call connected to the support line.",`semantic:connected:${event.callId}`);return;}
-    if(event.type==="CALL_STATE_CHANGED"){const data=draftObject(event.data);const next=String(data.to??"");if(next==="ON_HOLD"&&!this.database.getPendingAttentionRequest(event.callId)){if(this.database.getSemanticCallEvent(event.callId,"ON_HOLD_DECISION_CREATED"))return;this.database.insertSemanticCallEvent({id:randomUUID(),threadId:thread.id,caseId:event.caseId,callId:event.callId,eventType:"ON_HOLD",semanticKey:"ON_HOLD_DECISION_CREATED",payload:{kind:"ON_HOLD",startedAt:event.timestamp},occurredAt:event.timestamp});await this.createLowConsequenceWaitDecision(thread,event);return;}if(next==="CONNECTED")await this.sendSemantic(thread,"Connected to the support line.",`semantic:connected:${event.callId}`);return;}
-    if(event.type==="DISCLOSURE_DELIVERED"){await this.semantic(thread,event,{kind:"HUMAN_REACHED"},"A human representative was reached and the accessibility-assistant disclosure was delivered.");return;}
-    if(event.type==="REMOTE_TRANSCRIPT_FINAL"){const data=draftObject(event.data);const turn=data.turn;if(turn&&typeof turn==="object"&&!Array.isArray(turn)){for(const projection of semanticEventsFromFinalTurn(turn as Parameters<typeof semanticEventsFromFinalTurn>[0]))await this.semantic(thread,event,projection.event,projection.message);}return;}
-    if(event.type==="AGENT_DECISION_PROPOSED"){const data=draftObject(event.data);for(const projection of semanticEventsFromCapturedFacts(data.capturedFacts,this.database.getTranscript(event.callId)))await this.semantic(thread,event,projection.event,projection.message);return;}
-    if(event.type==="APPROVAL_REQUESTED"){await this.bridgeLegacyApproval(thread,event);return;}
-    if(event.type==="CALL_ENDED"){this.database.revokeSecureActionTokens({callId:event.callId,reason:"CALL_ENDED"});this.database.updateSupportThread(thread.id,{state:"CALL_ENDING",pendingAttentionRequestId:null});const data=draftObject(event.data);if(data.status==="DISCONNECTED"){await this.semantic(thread,event,{kind:"CALL_DISCONNECTED"},"The telephone call disconnected unexpectedly. Liaison is verifying the transcript-grounded outcome.");return;}await this.sendSemantic(thread,"The telephone call ended. Liaison is verifying the transcript-grounded outcome.",`semantic:ended:${event.callId}`);return;}
-    if(event.type==="OUTCOME_GENERATED"){await this.finishOutcome(thread,event);}
+  secureAction(token: string): SecureActionDetail {
+    const hash = hashSecureActionToken(token, this.actionSecret());
+    const record = this.database.getSecureActionToken(hash);
+    if (
+      !record ||
+      record.revokedAt ||
+      Date.parse(record.expiresAt) <= Date.now() ||
+      (record.singleUse && record.usedAt)
+    )
+      throw new Error("ACTION_LINK_INVALID_OR_EXPIRED");
+    const request = record.attentionRequestId ? this.database.getAttentionRequest(record.attentionRequestId) : null;
+    if (!request || request.status !== "PENDING") throw new Error("ACTION_NOT_PENDING");
+    const proposed = draftObject(request.proposedAction);
+    const item = record.caseId ? this.database.getCase(record.caseId) : null;
+    const call = record.callId ? this.calls.snapshot(record.callId) : null;
+    return {
+      tokenState: "VALID",
+      actionType: record.actionType,
+      attention: {
+        id: request.id,
+        tier: request.tier,
+        status: request.status,
+        question: request.question,
+        choices: request.choices as Array<{ id: string; shortCode: string; label: string; effect: string }>,
+        expiresAt: request.expiresAt,
+        secureActionRequired: true,
+      },
+      case: item,
+      call,
+      representativeRequest: String(proposed.representativeRequest ?? request.question),
+      currentGoal: String(proposed.currentGoal ?? item?.brief?.desiredOutcome ?? ""),
+      proposedAction: String(proposed.proposedAction ?? "Review the representative's request"),
+      consequences: String(proposed.consequences ?? "The call will remain paused until you decide."),
+      amountCents: typeof proposed.amountCents === "number" ? proposed.amountCents : null,
+      expiresAt: record.expiresAt,
+      approvalPermitted: proposed.approvalPermitted !== false,
+    };
   }
 
-  private async createLowConsequenceWaitDecision(thread:SupportThreadRecord,event:ApplicationCallEvent):Promise<void>{if(thread.autonomyMode==="DELEGATE"){await this.sendSemantic(thread,"The call is on hold; Delegate mode will continue waiting within the approved plan.",`semantic:hold:${event.callId}`);return;}const expiresAt=new Date(Date.now()+this.config.MAX_USER_WAIT_SECONDS*1_000).toISOString();const choices=[{id:"continue",shortCode:"A",label:"Continue waiting",effect:"Keep waiting for the current department."},{id:"estimate",shortCode:"B",label:"Ask for wait estimate",effect:"Ask how long the wait is expected to take."},{id:"supervisor",shortCode:"C",label:"Ask for a supervisor",effect:"Request escalation when a representative returns."}];const created=this.database.createAttentionRequest({id:randomUUID(),threadId:thread.id,caseId:event.caseId,callId:event.callId,tier:"LOW_CONSEQUENCE",question:`DECISION NEEDED - reply within ${this.config.SMS_DECISION_TIMEOUT_SECONDS} seconds\nThe call is on hold.\nA - Continue waiting\nB - Ask for wait estimate\nC - Ask for a supervisor\nSafe deadline: ${this.config.MAX_USER_WAIT_SECONDS} seconds; silence is not approval.`,choices,expiresAt});await this.calls.pause(event.callId!);await this.reply(this.database.getSupportThread(thread.id)!,created.request.question,`attention:${created.request.id}`,"WEB",["A -","B -","C -",`${this.config.SMS_DECISION_TIMEOUT_SECONDS} seconds`,`${this.config.MAX_USER_WAIT_SECONDS} seconds`]);}
+  async resolveSecureAction(
+    token: string,
+    input: { decision: "APPROVE" | "REJECT"; confirmation?: "CONFIRM"; replacement?: string },
+  ): Promise<MessagingThreadSnapshot> {
+    const detail = this.secureAction(token);
+    if (detail.attention.tier === "MATERIAL" && input.decision === "APPROVE" && input.confirmation !== "CONFIRM")
+      throw new Error("MATERIAL_CONFIRMATION_REQUIRED");
+    if (input.decision === "APPROVE" && !detail.approvalPermitted) throw new Error("CONDITIONAL_AUTHORITY_DENIED");
+    const hash = hashSecureActionToken(token, this.actionSecret());
+    const tokenRecord = this.database.getSecureActionToken(hash)!;
+    const request = this.database.getAttentionRequest(tokenRecord.attentionRequestId!)!;
+    const proposed = draftObject(request.proposedAction);
+    const approvalId = String(proposed.approvalId ?? "");
+    if (!tokenRecord.callId || !approvalId) throw new Error("ACTION_BINDING_INVALID");
+    const reservationId = randomUUID();
+    const reserved = this.database.beginSecureAttentionResolution({
+      tokenHash: hash,
+      actionType: tokenRecord.actionType,
+      threadId: tokenRecord.threadId,
+      caseId: tokenRecord.caseId,
+      callId: tokenRecord.callId,
+      attentionRequestId: request.id,
+      reservationId,
+    });
+    if (!reserved) throw new Error("ACTION_LINK_INVALID_OR_EXPIRED");
+    try {
+      if (input.decision === "APPROVE")
+        await this.calls.approve(tokenRecord.callId, approvalId, input.replacement, input.confirmation === "CONFIRM");
+      else await this.calls.reject(tokenRecord.callId, approvalId, input.replacement);
+      const resolved = this.database.finishSecureAttentionResolution({
+        id: request.id,
+        threadId: tokenRecord.threadId,
+        callId: tokenRecord.callId,
+        reservationId,
+        resolution: { decision: input.decision, channel: "WEB", tokenId: tokenRecord.id },
+      });
+      if (!resolved) throw new Error("STALE_ATTENTION_REQUEST");
+      this.database.insertSemanticCallEvent({
+        id: randomUUID(),
+        threadId: tokenRecord.threadId,
+        caseId: tokenRecord.caseId!,
+        callId: tokenRecord.callId,
+        eventType: "ATTENTION_RESOLVED",
+        semanticKey: `ATTENTION_RESOLVED:${request.id}`,
+        payload: {
+          attentionRequestId: request.id,
+          tier: detail.attention.tier,
+          decision: input.decision,
+          channel: "WEB",
+        },
+        occurredAt: new Date().toISOString(),
+      });
+      this.database.updateSupportThread(tokenRecord.threadId, {
+        state: "CALL_ACTIVE",
+        pendingAttentionRequestId: null,
+      });
+      const resolutionVerb = input.decision === "APPROVE" ? "approved" : "rejected";
+      await this.reply(
+        this.database.getSupportThread(tokenRecord.threadId)!,
+        `${detail.attention.tier.toLowerCase()} decision ${resolutionVerb} in the secure app.`,
+        `secure-resolution:${request.id}`,
+        "WEB",
+      );
+      await this.flush();
+      return this.snapshot();
+    } catch (error) {
+      this.database.cancelSecureAttentionResolution({
+        id: request.id,
+        threadId: tokenRecord.threadId,
+        callId: tokenRecord.callId,
+        reservationId,
+        reason: safeError(error),
+      });
+      throw error;
+    }
+  }
 
-  private async bridgeLegacyApproval(thread:SupportThreadRecord,event:ApplicationCallEvent):Promise<void>{const approval=event.data as ApprovalRequest;const tier=attentionTierForApproval(approval);const caseItem=this.database.getCase(event.caseId!);const conditional=caseItem?.approvedVersion?evaluateApprovalConditionalAuthority(approval,this.database.listConditionalAuthorityRules(thread.id,event.caseId),caseItem.approvedVersion):null;const expiresAt=new Date(Math.min(Date.parse(approval.expiresAt),Date.now()+this.config.MAX_USER_WAIT_SECONDS*1_000)).toISOString();const proposed={approvalId:approval.id,representativeRequest:approval.representativeRequest,currentGoal:caseItem?.brief?.desiredOutcome??"",proposedAction:approval.proposedSpeech,consequences:approval.consequences,amountCents:approval.amountCents,attentionAction:tier,conditionalAuthority:conditional,approvalPermitted:conditional?.decision!=="DENY"};const created=this.database.createAttentionRequest({id:randomUUID(),threadId:thread.id,caseId:event.caseId,callId:event.callId,tier,question:conditional?.decision==="DENY"?`${approval.question} This action conflicts with an approved conditional rule and cannot be approved; reject it or replace the response.`:approval.question,choices:[],proposedAction:proposed,expiresAt});await this.issueSecureAttentionLink(this.database.getSupportThread(thread.id)!,created.request.id,tier,expiresAt);}
+  private async handleCallEvent(event: ApplicationCallEvent): Promise<void> {
+    if (!event.callId || !event.caseId) return;
+    const thread = this.database.getActiveSupportThread(PRINCIPAL_ID);
+    if (!thread || thread.currentCaseId !== event.caseId) return;
+    if (event.type === "CALL_CONNECTED") {
+      await this.sendSemantic(thread, "Call connected to the support line.", `semantic:connected:${event.callId}`);
+      return;
+    }
+    if (event.type === "CALL_STATE_CHANGED") {
+      const data = draftObject(event.data);
+      const next = String(data.to ?? "");
+      if (next === "ON_HOLD" && !this.database.getPendingAttentionRequest(event.callId)) {
+        if (this.database.getSemanticCallEvent(event.callId, "ON_HOLD_DECISION_CREATED")) return;
+        this.database.insertSemanticCallEvent({
+          id: randomUUID(),
+          threadId: thread.id,
+          caseId: event.caseId,
+          callId: event.callId,
+          eventType: "ON_HOLD",
+          semanticKey: "ON_HOLD_DECISION_CREATED",
+          payload: { kind: "ON_HOLD", startedAt: event.timestamp },
+          occurredAt: event.timestamp,
+        });
+        await this.createLowConsequenceWaitDecision(thread, event);
+        return;
+      }
+      if (next === "CONNECTED")
+        await this.sendSemantic(thread, "Connected to the support line.", `semantic:connected:${event.callId}`);
+      return;
+    }
+    if (event.type === "DISCLOSURE_DELIVERED") {
+      await this.semantic(
+        thread,
+        event,
+        { kind: "HUMAN_REACHED" },
+        "A human representative was reached and the accessibility-assistant disclosure was delivered.",
+      );
+      return;
+    }
+    if (event.type === "REMOTE_TRANSCRIPT_FINAL") {
+      const data = draftObject(event.data);
+      const turn = data.turn;
+      if (turn && typeof turn === "object" && !Array.isArray(turn)) {
+        for (const projection of semanticEventsFromFinalTurn(turn as Parameters<typeof semanticEventsFromFinalTurn>[0]))
+          await this.semantic(thread, event, projection.event, projection.message);
+      }
+      return;
+    }
+    if (event.type === "AGENT_DECISION_PROPOSED") {
+      const data = draftObject(event.data);
+      for (const projection of semanticEventsFromCapturedFacts(
+        data.capturedFacts,
+        this.database.getTranscript(event.callId),
+      ))
+        await this.semantic(thread, event, projection.event, projection.message);
+      return;
+    }
+    if (event.type === "APPROVAL_REQUESTED") {
+      await this.bridgeLegacyApproval(thread, event);
+      return;
+    }
+    if (event.type === "CALL_ENDED") {
+      this.database.revokeSecureActionTokens({ callId: event.callId, reason: "CALL_ENDED" });
+      this.database.updateSupportThread(thread.id, { state: "CALL_ENDING", pendingAttentionRequestId: null });
+      const data = draftObject(event.data);
+      if (data.status === "DISCONNECTED") {
+        await this.semantic(
+          thread,
+          event,
+          { kind: "CALL_DISCONNECTED" },
+          "The telephone call disconnected unexpectedly. Liaison is verifying the transcript-grounded outcome.",
+        );
+        return;
+      }
+      await this.sendSemantic(
+        thread,
+        "The telephone call ended. Liaison is verifying the transcript-grounded outcome.",
+        `semantic:ended:${event.callId}`,
+      );
+      return;
+    }
+    if (event.type === "OUTCOME_GENERATED") {
+      await this.finishOutcome(thread, event);
+    }
+  }
 
-  private async finishOutcome(thread:SupportThreadRecord,event:ApplicationCallEvent):Promise<void>{
-    const callId=event.callId!;
-    const caseId=event.caseId!;
-    const report=this.database.getOutcome(callId);
-    if(!report)return;
-    for(const projection of semanticEventsFromOutcome(report))await this.semantic(thread,event,projection.event,projection.message);
-    const parsedEndedAt=Date.parse(report.endedAt);
-    const baseTime=Number.isFinite(parsedEndedAt)?parsedEndedAt:Date.now();
-    this.database.db.transaction(()=>{
-      const existingIds=new Set(this.database.listCommitments({callId}).map((item)=>item.id));
-      const confirmCommitment=(input:{id:string;party:"COMPANY"|"USER";description:string;evidence:OutcomeReport["companyCommitments"][number]["evidence"];occurredAt:string}):void=>{
-        if(!existingIds.has(input.id)){
-          this.database.createCommitment({id:input.id,threadId:thread.id,caseId,callId,party:input.party,status:"CONFIRMED",description:input.description,evidence:input.evidence,now:input.occurredAt});
+  private async createLowConsequenceWaitDecision(
+    thread: SupportThreadRecord,
+    event: ApplicationCallEvent,
+  ): Promise<void> {
+    if (thread.autonomyMode === "DELEGATE") {
+      await this.sendSemantic(
+        thread,
+        "The call is on hold; Delegate mode will continue waiting within the approved plan.",
+        `semantic:hold:${event.callId}`,
+      );
+      return;
+    }
+    const expiresAt = new Date(Date.now() + this.config.MAX_USER_WAIT_SECONDS * 1_000).toISOString();
+    const choices = [
+      { id: "continue", shortCode: "A", label: "Continue waiting", effect: "Keep waiting for the current department." },
+      {
+        id: "estimate",
+        shortCode: "B",
+        label: "Ask for wait estimate",
+        effect: "Ask how long the wait is expected to take.",
+      },
+      {
+        id: "supervisor",
+        shortCode: "C",
+        label: "Ask for a supervisor",
+        effect: "Request escalation when a representative returns.",
+      },
+    ];
+    const created = this.database.createAttentionRequest({
+      id: randomUUID(),
+      threadId: thread.id,
+      caseId: event.caseId,
+      callId: event.callId,
+      tier: "LOW_CONSEQUENCE",
+      question: `DECISION NEEDED - reply within ${this.config.SMS_DECISION_TIMEOUT_SECONDS} seconds\nThe call is on hold.\nA - Continue waiting\nB - Ask for wait estimate\nC - Ask for a supervisor\nSafe deadline: ${this.config.MAX_USER_WAIT_SECONDS} seconds; silence is not approval.`,
+      choices,
+      expiresAt,
+    });
+    await this.calls.pause(event.callId!);
+    await this.reply(
+      this.database.getSupportThread(thread.id)!,
+      created.request.question,
+      `attention:${created.request.id}`,
+      "WEB",
+      [
+        "A -",
+        "B -",
+        "C -",
+        `${this.config.SMS_DECISION_TIMEOUT_SECONDS} seconds`,
+        `${this.config.MAX_USER_WAIT_SECONDS} seconds`,
+      ],
+    );
+  }
+
+  private async bridgeLegacyApproval(thread: SupportThreadRecord, event: ApplicationCallEvent): Promise<void> {
+    const approval = event.data as ApprovalRequest;
+    const tier = attentionTierForApproval(approval);
+    const caseItem = this.database.getCase(event.caseId!);
+    const conditional = caseItem?.approvedVersion
+      ? evaluateApprovalConditionalAuthority(
+          approval,
+          this.database.listConditionalAuthorityRules(thread.id, event.caseId),
+          caseItem.approvedVersion,
+        )
+      : null;
+    const expiresAt = new Date(
+      Math.min(Date.parse(approval.expiresAt), Date.now() + this.config.MAX_USER_WAIT_SECONDS * 1_000),
+    ).toISOString();
+    const proposed = {
+      approvalId: approval.id,
+      representativeRequest: approval.representativeRequest,
+      currentGoal: caseItem?.brief?.desiredOutcome ?? "",
+      proposedAction: approval.proposedSpeech,
+      consequences: approval.consequences,
+      amountCents: approval.amountCents,
+      attentionAction: tier,
+      conditionalAuthority: conditional,
+      approvalPermitted: conditional?.decision !== "DENY",
+    };
+    const created = this.database.createAttentionRequest({
+      id: randomUUID(),
+      threadId: thread.id,
+      caseId: event.caseId,
+      callId: event.callId,
+      tier,
+      question:
+        conditional?.decision === "DENY"
+          ? `${approval.question} This action conflicts with an approved conditional rule and cannot be approved; reject it or replace the response.`
+          : approval.question,
+      choices: [],
+      proposedAction: proposed,
+      expiresAt,
+    });
+    await this.issueSecureAttentionLink(
+      this.database.getSupportThread(thread.id)!,
+      created.request.id,
+      tier,
+      expiresAt,
+    );
+  }
+
+  private async finishOutcome(thread: SupportThreadRecord, event: ApplicationCallEvent): Promise<void> {
+    const callId = event.callId!;
+    const caseId = event.caseId!;
+    const report = this.database.getOutcome(callId);
+    if (!report) return;
+    for (const projection of semanticEventsFromOutcome(report))
+      await this.semantic(thread, event, projection.event, projection.message);
+    const parsedEndedAt = Date.parse(report.endedAt);
+    const baseTime = Number.isFinite(parsedEndedAt) ? parsedEndedAt : Date.now();
+    this.database.db.transaction(() => {
+      const existingIds = new Set(this.database.listCommitments({ callId }).map((item) => item.id));
+      const confirmCommitment = (input: {
+        id: string;
+        party: "COMPANY" | "USER";
+        description: string;
+        evidence: OutcomeReport["companyCommitments"][number]["evidence"];
+        occurredAt: string;
+      }): void => {
+        if (!existingIds.has(input.id)) {
+          this.database.createCommitment({
+            id: input.id,
+            threadId: thread.id,
+            caseId,
+            callId,
+            party: input.party,
+            status: "CONFIRMED",
+            description: input.description,
+            evidence: input.evidence,
+            now: input.occurredAt,
+          });
           existingIds.add(input.id);
         }
-        const semantic={kind:"COMMITMENT_CONFIRMED",commitmentId:input.id} satisfies SemanticCallEvent;
-        this.database.insertSemanticCallEvent({id:randomUUID(),threadId:thread.id,caseId,callId,eventType:semantic.kind,semanticKey:semanticCallEventDedupKey(semantic),payload:semantic,occurredAt:input.occurredAt});
+        const semantic = { kind: "COMMITMENT_CONFIRMED", commitmentId: input.id } satisfies SemanticCallEvent;
+        this.database.insertSemanticCallEvent({
+          id: randomUUID(),
+          threadId: thread.id,
+          caseId,
+          callId,
+          eventType: semantic.kind,
+          semanticKey: semanticCallEventDedupKey(semantic),
+          payload: semantic,
+          occurredAt: input.occurredAt,
+        });
       };
-      for(const [index,item] of report.companyCommitments.entries())confirmCommitment({id:`outcome:${callId}:company:${index}`,party:"COMPANY",description:item.value,evidence:item.evidence,occurredAt:new Date(baseTime+index).toISOString()});
-      for(const [index,item] of report.userActions.entries())confirmCommitment({id:`outcome:${callId}:user:${index}`,party:"USER",description:item.value,evidence:item.evidence,occurredAt:new Date(baseTime+100+index).toISOString()});
-      this.database.insertSemanticCallEvent({id:randomUUID(),threadId:thread.id,caseId,callId,eventType:"OUTCOME_PROJECTED",semanticKey:"OUTCOME_PROJECTED",payload:{status:report.status,commitmentCount:report.companyCommitments.length+report.userActions.length},occurredAt:event.timestamp});
-      this.enqueueReply(thread,this.outcomeText(report,callId),`outcome:${callId}`,["Result:","Unresolved:",this.config.PUBLIC_BASE_URL]);
-      this.database.updateSupportThread(thread.id,{state:["TECHNICAL_FAILURE","DISCONNECTED"].includes(report.status)?"FAILED":"COMPLETED",activeCallId:null,pendingAttentionRequestId:null});
+      for (const [index, item] of report.companyCommitments.entries())
+        confirmCommitment({
+          id: `outcome:${callId}:company:${index}`,
+          party: "COMPANY",
+          description: item.value,
+          evidence: item.evidence,
+          occurredAt: new Date(baseTime + index).toISOString(),
+        });
+      for (const [index, item] of report.userActions.entries())
+        confirmCommitment({
+          id: `outcome:${callId}:user:${index}`,
+          party: "USER",
+          description: item.value,
+          evidence: item.evidence,
+          occurredAt: new Date(baseTime + 100 + index).toISOString(),
+        });
+      this.database.insertSemanticCallEvent({
+        id: randomUUID(),
+        threadId: thread.id,
+        caseId,
+        callId,
+        eventType: "OUTCOME_PROJECTED",
+        semanticKey: "OUTCOME_PROJECTED",
+        payload: {
+          status: report.status,
+          commitmentCount: report.companyCommitments.length + report.userActions.length,
+        },
+        occurredAt: event.timestamp,
+      });
+      this.enqueueReply(thread, this.outcomeText(report, callId), `outcome:${callId}`, [
+        "Result:",
+        "Unresolved:",
+        this.config.PUBLIC_BASE_URL,
+      ]);
+      this.database.updateSupportThread(thread.id, {
+        state: ["TECHNICAL_FAILURE", "DISCONNECTED"].includes(report.status) ? "FAILED" : "COMPLETED",
+        activeCallId: null,
+        pendingAttentionRequestId: null,
+      });
     })();
-    for(const [id,message] of this.transientOutboundBodies)if(message.includes("/a/")||/CALL [23456789A-HJ-NP-Z]{6}/.test(message))this.transientOutboundBodies.delete(id);
+    for (const [id, message] of this.transientOutboundBodies)
+      if (message.includes("/a/") || /CALL [23456789A-HJ-NP-Z]{6}/.test(message))
+        this.transientOutboundBodies.delete(id);
     void this.flush();
   }
 
-  private async semantic(thread:SupportThreadRecord,event:ApplicationCallEvent,semantic:SemanticCallEvent,text:string):Promise<void>{const key=semanticCallEventDedupKey(semantic);const inserted=this.database.insertSemanticCallEvent({id:randomUUID(),threadId:thread.id,caseId:event.caseId!,callId:event.callId!,eventType:semantic.kind,semanticKey:key,payload:semantic,occurredAt:event.timestamp});if(inserted.created)await this.sendSemantic(thread,text,`semantic:${event.callId}:${key}`);}
-  private async sendSemantic(thread:SupportThreadRecord,text:string,key:string):Promise<void>{if(this.config.SMS_UPDATE_DETAIL==="MINIMAL"&&!/decision|failure|complete|ended/i.test(text))return;await this.reply(this.database.getSupportThread(thread.id)!,text,key,"WEB");}
+  private async semantic(
+    thread: SupportThreadRecord,
+    event: ApplicationCallEvent,
+    semantic: SemanticCallEvent,
+    text: string,
+  ): Promise<void> {
+    const key = semanticCallEventDedupKey(semantic);
+    const inserted = this.database.insertSemanticCallEvent({
+      id: randomUUID(),
+      threadId: thread.id,
+      caseId: event.caseId!,
+      callId: event.callId!,
+      eventType: semantic.kind,
+      semanticKey: key,
+      payload: semantic,
+      occurredAt: event.timestamp,
+    });
+    if (inserted.created) await this.sendSemantic(thread, text, `semantic:${event.callId}:${key}`);
+  }
+  private async sendSemantic(thread: SupportThreadRecord, text: string, key: string): Promise<void> {
+    if (this.config.SMS_UPDATE_DETAIL === "MINIMAL" && !/decision|failure|complete|ended/i.test(text)) return;
+    await this.reply(this.database.getSupportThread(thread.id)!, text, key, "WEB");
+  }
 
-  private async issueSecureAttentionLink(thread:SupportThreadRecord,attentionRequestId:string,tier:AttentionTier,expiresAt:string):Promise<void>{const raw=generateSecureActionToken();const tokenId=randomUUID();this.database.createSecureActionToken({id:tokenId,tokenHash:hashSecureActionToken(raw,this.actionSecret()),actionType:`${tier}_ATTENTION`,threadId:thread.id,caseId:thread.currentCaseId,callId:thread.activeCallId,attentionRequestId,singleUse:true,expiresAt:new Date(Math.min(Date.parse(expiresAt),Date.now()+this.config.SECURE_ACTION_LINK_TTL_MINUTES*60_000)).toISOString()});const durable=`${tier} REVIEW REQUIRED\nOpen the secure app to review the representative request and consequences: ${this.config.PUBLIC_BASE_URL}/a/[SECURE_ACTION_TOKEN]\nDecision deadline: ${this.config.MAX_USER_WAIT_SECONDS} seconds. Silence is not approval.`;const transient=durable.replace("[SECURE_ACTION_TOKEN]",raw);await this.reply(thread,durable,`attention:${attentionRequestId}:${tokenId}`,"WEB",["[SECURE_ACTION_TOKEN]",`${this.config.MAX_USER_WAIT_SECONDS} seconds`],transient,[raw,`${this.config.MAX_USER_WAIT_SECONDS} seconds`]);}
+  private async issueSecureAttentionLink(
+    thread: SupportThreadRecord,
+    attentionRequestId: string,
+    tier: AttentionTier,
+    expiresAt: string,
+  ): Promise<void> {
+    const raw = generateSecureActionToken();
+    const tokenId = randomUUID();
+    this.database.createSecureActionToken({
+      id: tokenId,
+      tokenHash: hashSecureActionToken(raw, this.actionSecret()),
+      actionType: `${tier}_ATTENTION`,
+      threadId: thread.id,
+      caseId: thread.currentCaseId,
+      callId: thread.activeCallId,
+      attentionRequestId,
+      singleUse: true,
+      expiresAt: new Date(
+        Math.min(Date.parse(expiresAt), Date.now() + this.config.SECURE_ACTION_LINK_TTL_MINUTES * 60_000),
+      ).toISOString(),
+    });
+    const durable = `${tier} REVIEW REQUIRED\nOpen the secure app to review the representative request and consequences: ${this.config.PUBLIC_BASE_URL}/a/[SECURE_ACTION_TOKEN]\nDecision deadline: ${this.config.MAX_USER_WAIT_SECONDS} seconds. Silence is not approval.`;
+    const transient = durable.replace("[SECURE_ACTION_TOKEN]", raw);
+    await this.reply(
+      thread,
+      durable,
+      `attention:${attentionRequestId}:${tokenId}`,
+      "WEB",
+      ["[SECURE_ACTION_TOKEN]", `${this.config.MAX_USER_WAIT_SECONDS} seconds`],
+      transient,
+      [raw, `${this.config.MAX_USER_WAIT_SECONDS} seconds`],
+    );
+  }
 
-  private async recoverTransientSecureAttention():Promise<void>{const thread=this.database.getActiveSupportThread(PRINCIPAL_ID);if(!thread?.pendingAttentionRequestId)return;const request=this.database.getAttentionRequest(thread.pendingAttentionRequestId);if(!request||request.status!=="PENDING"||request.resolution!==null||isSmsResolvableTier(request.tier))return;this.database.revokeSecureActionTokens({attentionRequestId:request.id,reason:"SERVER_RESTART_REISSUE"});await this.issueSecureAttentionLink(thread,request.id,request.tier,request.expiresAt);}
+  private async recoverTransientSecureAttention(): Promise<void> {
+    const thread = this.database.getActiveSupportThread(PRINCIPAL_ID);
+    if (!thread?.pendingAttentionRequestId) return;
+    const request = this.database.getAttentionRequest(thread.pendingAttentionRequestId);
+    if (!request || request.status !== "PENDING" || request.resolution !== null || isSmsResolvableTier(request.tier))
+      return;
+    this.database.revokeSecureActionTokens({ attentionRequestId: request.id, reason: "SERVER_RESTART_REISSUE" });
+    await this.issueSecureAttentionLink(thread, request.id, request.tier, request.expiresAt);
+  }
 
-  private recoverTransientCallAuthorization():void{const thread=this.database.getActiveSupportThread(PRINCIPAL_ID);if(!thread||!new Set(["AWAITING_AVAILABILITY","CALL_STARTING"]).has(thread.state))return;if(thread.state==="CALL_STARTING"&&!thread.activeCallId){const active=this.database.getActiveCall();const ambiguous=active?.mode==="TWILIO"&&active.case_id===thread.currentCaseId&&active.state==="ENDING"&&Boolean(active.terminal_reason?.startsWith("AMBIGUOUS_"));this.database.revokeCallAuthorizations({threadId:thread.id,reason:"AMBIGUOUS_CALL_START_AFTER_RESTART"});this.database.updateSupportThread(thread.id,ambiguous?{state:"CALL_ENDING",activeCallId:active.id,approvedPlanVersion:null}:{state:"FAILED",approvedPlanVersion:null});void this.reply(this.database.getSupportThread(thread.id)!,ambiguous?"The server restarted while provider acceptance was unresolved. Another call remains blocked. Check Twilio Calls and end any matching call; no automatic retry will occur.":"The server restarted while the provider call start was unresolved. Liaison will not retry automatically. Check the provider dashboard for an active call, end it there if necessary, then start a NEW case.",`restart-call-start:${thread.id}:${Date.now()}`,"WEB");return;}if(thread.state!=="AWAITING_AVAILABILITY")return;this.database.revokeCallAuthorizations({threadId:thread.id,reason:"SERVER_RESTART_CODE_NOT_RECOVERABLE"});this.database.updateSupportThread(thread.id,{state:"AWAITING_PLAN_APPROVAL",approvedPlanVersion:null});void this.reply(this.database.getSupportThread(thread.id)!,"The one-time call code expired when the server restarted. Review the unchanged plan and reply APPROVE PLAN to issue a fresh code.",`restart-call-auth:${thread.id}:${Date.now()}`,"WEB");}
+  private recoverTransientCallAuthorization(): void {
+    const thread = this.database.getActiveSupportThread(PRINCIPAL_ID);
+    if (!thread || !new Set(["AWAITING_AVAILABILITY", "CALL_STARTING"]).has(thread.state)) return;
+    if (thread.state === "CALL_STARTING" && !thread.activeCallId) {
+      const active = this.database.getActiveCall();
+      const ambiguous =
+        active?.mode === "TWILIO" &&
+        active.case_id === thread.currentCaseId &&
+        active.state === "ENDING" &&
+        Boolean(active.terminal_reason?.startsWith("AMBIGUOUS_"));
+      this.database.revokeCallAuthorizations({ threadId: thread.id, reason: "AMBIGUOUS_CALL_START_AFTER_RESTART" });
+      this.database.updateSupportThread(
+        thread.id,
+        ambiguous
+          ? { state: "CALL_ENDING", activeCallId: active.id, approvedPlanVersion: null }
+          : { state: "FAILED", approvedPlanVersion: null },
+      );
+      void this.reply(
+        this.database.getSupportThread(thread.id)!,
+        ambiguous
+          ? "The server restarted while provider acceptance was unresolved. Another call remains blocked. Check Twilio Calls and end any matching call; no automatic retry will occur."
+          : "The server restarted while the provider call start was unresolved. Liaison will not retry automatically. Check the provider dashboard for an active call, end it there if necessary, then start a NEW case.",
+        `restart-call-start:${thread.id}:${Date.now()}`,
+        "WEB",
+      );
+      return;
+    }
+    if (thread.state !== "AWAITING_AVAILABILITY") return;
+    this.database.revokeCallAuthorizations({ threadId: thread.id, reason: "SERVER_RESTART_CODE_NOT_RECOVERABLE" });
+    this.database.updateSupportThread(thread.id, { state: "AWAITING_PLAN_APPROVAL", approvedPlanVersion: null });
+    void this.reply(
+      this.database.getSupportThread(thread.id)!,
+      "The one-time call code expired when the server restarted. Review the unchanged plan and reply APPROVE PLAN to issue a fresh code.",
+      `restart-call-auth:${thread.id}:${Date.now()}`,
+      "WEB",
+    );
+  }
 
-  private async reconcileTerminalOutcome():Promise<void>{const thread=this.database.getActiveSupportThread(PRINCIPAL_ID);if(!thread?.activeCallId)return;const call=this.database.getCall(thread.activeCallId);if(!call||!new Set(["COMPLETED","FAILED"]).has(call.state)||this.calls.isTerminalFinalizationInProgress(call.id))return;await this.calls.ensureTerminalOutcome(call.id);await this.finishOutcome(thread,{sequence:0,callId:call.id,caseId:call.case_id,type:"OUTCOME_GENERATED",data:{reconciled:true},timestamp:new Date().toISOString()});}
+  private async reconcileTerminalOutcome(): Promise<void> {
+    const thread = this.database.getActiveSupportThread(PRINCIPAL_ID);
+    if (!thread?.activeCallId) return;
+    const call = this.database.getCall(thread.activeCallId);
+    if (
+      !call ||
+      !new Set(["COMPLETED", "FAILED"]).has(call.state) ||
+      this.calls.isTerminalFinalizationInProgress(call.id)
+    )
+      return;
+    await this.calls.ensureTerminalOutcome(call.id);
+    await this.finishOutcome(thread, {
+      sequence: 0,
+      callId: call.id,
+      caseId: call.case_id,
+      type: "OUTCOME_GENERATED",
+      data: { reconciled: true },
+      timestamp: new Date().toISOString(),
+    });
+  }
 
-  private recordProjectionFailure(event:ApplicationCallEvent|null,error:unknown):void{const message=safeError(error);try{this.database.appendEvent({id:randomUUID(),callId:event?.callId,caseId:event?.caseId,type:"TECHNICAL_ERROR",payload:{code:"MESSAGING_EVENT_PROJECTION_FAILED",sourceType:event?.type??"STARTUP_RECONCILIATION",sourceSequence:event?.sequence??null,error:message},origin:"MESSAGING",idempotencyKey:`messaging-projection-failure:${event?.type??"startup"}:${event?.sequence??0}`});}catch{process.stderr.write(`Liaison messaging projection failure: ${message}\n`);}}
+  private recordProjectionFailure(event: ApplicationCallEvent | null, error: unknown): void {
+    const message = safeError(error);
+    try {
+      this.database.appendEvent({
+        id: randomUUID(),
+        callId: event?.callId,
+        caseId: event?.caseId,
+        type: "TECHNICAL_ERROR",
+        payload: {
+          code: "MESSAGING_EVENT_PROJECTION_FAILED",
+          sourceType: event?.type ?? "STARTUP_RECONCILIATION",
+          sourceSequence: event?.sequence ?? null,
+          error: message,
+        },
+        origin: "MESSAGING",
+        idempotencyKey: `messaging-projection-failure:${event?.type ?? "startup"}:${event?.sequence ?? 0}`,
+      });
+    } catch {
+      process.stderr.write(`Liaison messaging projection failure: ${message}\n`);
+    }
+  }
 
-  private enqueueReply(thread:SupportThreadRecord,text:string,idempotencyKey:string,requiredFragments:string[]=[],transientText?:string,transientRequiredFragments:string[]=[]):OutboundMessageRecord|null{if(thread.messagingOptState==="OPTED_OUT")return null;const sinkSafe=redactInboundSmsSecrets(text).redactedText;const composed=composeSms({summary:sinkSafe,maxSegments:this.config.SMS_MAX_SEGMENTS_PER_MESSAGE,requiredFragments});const transientComposed=transientText?composeSms({summary:redactInboundSmsSecrets(transientText).redactedText,maxSegments:this.config.SMS_MAX_SEGMENTS_PER_MESSAGE,requiredFragments:transientRequiredFragments}):null;const provider=this.config.MESSAGING_MODE==="twilio_sms"&&this.config.ALLOW_REAL_MESSAGING?"TWILIO_SMS":"WEB";const id=randomUUID();const result=this.database.enqueueOutboundMessage({id,threadId:thread.id,providerKind:provider,redactedBody:composed.body,sender:provider==="TWILIO_SMS"?(this.config.TWILIO_MESSAGING_SERVICE_SID||this.config.TWILIO_SMS_FROM_NUMBER):"LIAISON",recipient:provider==="TWILIO_SMS"?this.config.OWNER_PHONE_E164:"WEB_OWNER",caseId:thread.currentCaseId,callId:thread.activeCallId,attentionRequestId:thread.pendingAttentionRequestId,segmentEstimate:composed.estimate.segments,idempotencyKey});if(transientComposed&&result.created)this.transientOutboundBodies.set(result.message.id,transientComposed.body);return result.message;}
-  private async reply(thread:SupportThreadRecord,text:string,idempotencyKey:string,_origin:"WEB"|"TWILIO_SMS"|"SIMULATOR",requiredFragments:string[]=[],transientText?:string,transientRequiredFragments:string[]=[]):Promise<void>{this.enqueueReply(thread,text,idempotencyKey,requiredFragments,transientText,transientRequiredFragments);}
+  private enqueueReply(
+    thread: SupportThreadRecord,
+    text: string,
+    idempotencyKey: string,
+    requiredFragments: string[] = [],
+    transientText?: string,
+    transientRequiredFragments: string[] = [],
+  ): OutboundMessageRecord | null {
+    if (thread.messagingOptState === "OPTED_OUT") return null;
+    const sinkSafe = redactInboundSmsSecrets(text).redactedText;
+    const composed = composeSms({
+      summary: sinkSafe,
+      maxSegments: this.config.SMS_MAX_SEGMENTS_PER_MESSAGE,
+      requiredFragments,
+    });
+    const transientComposed = transientText
+      ? composeSms({
+          summary: redactInboundSmsSecrets(transientText).redactedText,
+          maxSegments: this.config.SMS_MAX_SEGMENTS_PER_MESSAGE,
+          requiredFragments: transientRequiredFragments,
+        })
+      : null;
+    const provider =
+      this.config.MESSAGING_MODE === "twilio_sms" && this.config.ALLOW_REAL_MESSAGING ? "TWILIO_SMS" : "WEB";
+    const id = randomUUID();
+    const result = this.database.enqueueOutboundMessage({
+      id,
+      threadId: thread.id,
+      providerKind: provider,
+      redactedBody: composed.body,
+      sender:
+        provider === "TWILIO_SMS"
+          ? this.config.TWILIO_MESSAGING_SERVICE_SID || this.config.TWILIO_SMS_FROM_NUMBER
+          : "LIAISON",
+      recipient: provider === "TWILIO_SMS" ? this.config.OWNER_PHONE_E164 : "WEB_OWNER",
+      caseId: thread.currentCaseId,
+      callId: thread.activeCallId,
+      attentionRequestId: thread.pendingAttentionRequestId,
+      segmentEstimate: composed.estimate.segments,
+      idempotencyKey,
+    });
+    if (transientComposed && result.created)
+      this.transientOutboundBodies.set(result.message.id, transientComposed.body);
+    return result.message;
+  }
+  private async reply(
+    thread: SupportThreadRecord,
+    text: string,
+    idempotencyKey: string,
+    _origin: "WEB" | "TWILIO_SMS" | "SIMULATOR",
+    requiredFragments: string[] = [],
+    transientText?: string,
+    transientRequiredFragments: string[] = [],
+  ): Promise<void> {
+    this.enqueueReply(thread, text, idempotencyKey, requiredFragments, transientText, transientRequiredFragments);
+  }
 
-  private statusText(thread:SupportThreadRecord):string{const item=thread.currentCaseId?this.database.getCase(thread.currentCaseId):null;const call=thread.activeCallId?this.database.getCall(thread.activeCallId):null;const pending=thread.pendingAttentionRequestId?this.database.getAttentionRequest(thread.pendingAttentionRequestId):null;return[`State: ${thread.state.replaceAll("_"," ")}.`,`Mode: ${thread.autonomyMode}.`,item?`Case: ${item.companyName} - ${item.brief?.desiredOutcome??item.title}.`:"No current case.",call?`Call: ${call.state.replaceAll("_"," ")} - ${call.activity}.`:"No active call.",pending?`Decision pending: ${pending.question}`:"No decision is pending."].join("\n");}
-  private replaceConditionalRules(threadId:string,caseId:string,planVersion:number,draft:SupportDraft):ConditionalAuthorityRule[]{for(const rule of this.database.listConditionalAuthorityRules(threadId,caseId))this.database.deactivateConditionalAuthorityRule(rule.id);const rules=extractConditionalAuthorityRules(caseId,planVersion,[draft.issueDescription??"",draft.desiredOutcome??"",...draft.acceptableAlternatives,...draft.unacceptableOutcomes]);for(const [index,rule] of rules.entries())this.database.createConditionalAuthorityRule({id:rule.id,threadId,caseId,actionType:rule.subject,condition:{protocolVersion:1,planVersion,comparison:rule.comparison,amountCents:rule.amountCents},permission:rule.decision,priority:rules.length-index});return rules;}
-  private planRuleFragments(rules:readonly ConditionalAuthorityRule[]):string[]{return rules.length?["Conditional rules (inspect before approval):",...rules.map((rule)=>`- ${conditionalRuleSummary(rule)}`)]:["No conditional predelegation rules were inferred"]}
-  private planSummary(brief:CallBrief,mode:string,rules:readonly ConditionalAuthorityRule[]=[]):string{return[`PLAN ${brief.version} - REVIEW REQUIRED`,`Company: ${brief.companyName}`,`Goal: ${brief.desiredOutcome}`,`Mode: ${mode}`,`Liaison may explain the issue, ask factual questions, request escalation, and seek a case number.`,`Liaison must ask before personal-data disclosure, financial outcomes, account changes, cancellation, scheduling, or a different outcome.`,rules.length?`Conditional rules (inspect before approval):\n${rules.map((rule)=>`- ${conditionalRuleSummary(rule)}`).join("\n")}`:"No conditional predelegation rules were inferred; consequential actions require review.",`Liaison may not purchase, reveal credentials or one-time codes, provide full SSNs or payment cards, waive rights, or impersonate you.`,brief.authority.forbiddenActions.length?`Also prohibited: ${brief.authority.forbiddenActions.join("; ")}`:"",`The number was supplied by you; Liaison does not verify who owns it.`,`Secure app: ${this.config.PUBLIC_BASE_URL}/`,`Reply APPROVE PLAN to create a one-time call code. Reply EDIT to change the plan.`].filter(Boolean).join("\n");}
-  private outcomeText(report:OutcomeReport,callId:string):string{const verified=report.companyCommitments.map((item)=>item.value);const unresolved=report.unresolvedItems.map((item)=>item.value);const result=(report.resolution?.value??report.summary?.value??"No verified resolution was established.").slice(0,70);return[`CALL COMPLETE`,`Status: ${report.status.replaceAll("_"," ")}.`,`Result: ${result}`,report.caseNumber?`Case number: ${report.caseNumber.value}`:"",verified.length?`Verified commitments: ${verified.join("; ").slice(0,70)}`:"No verified company commitment.",`Unresolved: ${(unresolved.join("; ")||"None recorded.").slice(0,50)}`,`Full transcript and evidence: ${this.config.PUBLIC_BASE_URL}/calls/${callId}`].filter(Boolean).join("\n");}
-  private moveThread(thread:SupportThreadRecord,next:SupportThreadRecord["state"],patch:Parameters<LiaisonDatabase["updateSupportThread"]>[1]={}):SupportThreadRecord{if(thread.state!==next&&!canTransitionSupportThread(thread.state,next))throw new Error(`ILLEGAL_SUPPORT_THREAD_TRANSITION:${thread.state}:${next}`);return this.database.updateSupportThread(thread.id,{...patch,state:next})!;}
-  private callSecret():string{return this.config.CALL_TOKEN_SECRET||this.config.SESSION_SECRET||"liaison-development-call-token";}
-  private actionSecret():string{return this.config.ACTION_LINK_SECRET||this.config.CALL_TOKEN_SECRET||this.config.SESSION_SECRET||"liaison-development-action-token";}
-  private makeSmsAdapter():TwilioSmsMessagingAdapter|null{try{if(!this.config.TWILIO_ACCOUNT_SID||!this.config.TWILIO_AUTH_TOKEN)return null;return new TwilioSmsMessagingAdapter({accountSid:this.config.TWILIO_ACCOUNT_SID,authToken:this.config.TWILIO_AUTH_TOKEN,inboundWebhookUrl:`${this.config.PUBLIC_BASE_URL}/webhooks/twilio/messaging/inbound`,statusCallbackUrl:`${this.config.PUBLIC_BASE_URL}/webhooks/twilio/messaging/status`,messagingServiceSid:this.config.TWILIO_MESSAGING_SERVICE_SID||undefined,fromNumber:this.config.TWILIO_SMS_FROM_NUMBER||undefined});}catch{return null;}}
+  private statusText(thread: SupportThreadRecord): string {
+    const item = thread.currentCaseId ? this.database.getCase(thread.currentCaseId) : null;
+    const call = thread.activeCallId ? this.database.getCall(thread.activeCallId) : null;
+    const pending = thread.pendingAttentionRequestId
+      ? this.database.getAttentionRequest(thread.pendingAttentionRequestId)
+      : null;
+    return [
+      `State: ${thread.state.replaceAll("_", " ")}.`,
+      `Mode: ${thread.autonomyMode}.`,
+      item ? `Case: ${item.companyName} - ${item.brief?.desiredOutcome ?? item.title}.` : "No current case.",
+      call ? `Call: ${call.state.replaceAll("_", " ")} - ${call.activity}.` : "No active call.",
+      pending ? `Decision pending: ${pending.question}` : "No decision is pending.",
+    ].join("\n");
+  }
+  private replaceConditionalRules(
+    threadId: string,
+    caseId: string,
+    planVersion: number,
+    draft: SupportDraft,
+  ): ConditionalAuthorityRule[] {
+    for (const rule of this.database.listConditionalAuthorityRules(threadId, caseId))
+      this.database.deactivateConditionalAuthorityRule(rule.id);
+    const rules = extractConditionalAuthorityRules(caseId, planVersion, [
+      draft.issueDescription ?? "",
+      draft.desiredOutcome ?? "",
+      ...draft.acceptableAlternatives,
+      ...draft.unacceptableOutcomes,
+    ]);
+    for (const [index, rule] of rules.entries())
+      this.database.createConditionalAuthorityRule({
+        id: rule.id,
+        threadId,
+        caseId,
+        actionType: rule.subject,
+        condition: { protocolVersion: 1, planVersion, comparison: rule.comparison, amountCents: rule.amountCents },
+        permission: rule.decision,
+        priority: rules.length - index,
+      });
+    return rules;
+  }
+  private planRuleFragments(rules: readonly ConditionalAuthorityRule[]): string[] {
+    return rules.length
+      ? ["Conditional rules (inspect before approval):", ...rules.map((rule) => `- ${conditionalRuleSummary(rule)}`)]
+      : ["No conditional predelegation rules were inferred"];
+  }
+  private planSummary(brief: CallBrief, mode: string, rules: readonly ConditionalAuthorityRule[] = []): string {
+    return [
+      `PLAN ${brief.version} - REVIEW REQUIRED`,
+      `Company: ${brief.companyName}`,
+      `Goal: ${brief.desiredOutcome}`,
+      `Mode: ${mode}`,
+      `Liaison may explain the issue, ask factual questions, request escalation, and seek a case number.`,
+      `Liaison must ask before personal-data disclosure, financial outcomes, account changes, cancellation, scheduling, or a different outcome.`,
+      rules.length
+        ? `Conditional rules (inspect before approval):\n${rules.map((rule) => `- ${conditionalRuleSummary(rule)}`).join("\n")}`
+        : "No conditional predelegation rules were inferred; consequential actions require review.",
+      `Liaison may not purchase, reveal credentials or one-time codes, provide full SSNs or payment cards, waive rights, or impersonate you.`,
+      brief.authority.forbiddenActions.length ? `Also prohibited: ${brief.authority.forbiddenActions.join("; ")}` : "",
+      `The number was supplied by you; Liaison does not verify who owns it.`,
+      `Secure app: ${this.config.PUBLIC_BASE_URL}/`,
+      `Reply APPROVE PLAN to create a one-time call code. Reply EDIT to change the plan.`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+  private outcomeText(report: OutcomeReport, callId: string): string {
+    const verified = report.companyCommitments.map((item) => item.value);
+    const unresolved = report.unresolvedItems.map((item) => item.value);
+    const result = (
+      report.resolution?.value ??
+      report.summary?.value ??
+      "No verified resolution was established."
+    ).slice(0, 70);
+    return [
+      `CALL COMPLETE`,
+      `Status: ${report.status.replaceAll("_", " ")}.`,
+      `Result: ${result}`,
+      report.caseNumber ? `Case number: ${report.caseNumber.value}` : "",
+      verified.length ? `Verified commitments: ${verified.join("; ").slice(0, 70)}` : "No verified company commitment.",
+      `Unresolved: ${(unresolved.join("; ") || "None recorded.").slice(0, 50)}`,
+      `Full transcript and evidence: ${this.config.PUBLIC_BASE_URL}/calls/${callId}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+  private moveThread(
+    thread: SupportThreadRecord,
+    next: SupportThreadRecord["state"],
+    patch: Parameters<LiaisonDatabase["updateSupportThread"]>[1] = {},
+  ): SupportThreadRecord {
+    if (thread.state !== next && !canTransitionSupportThread(thread.state, next))
+      throw new Error(`ILLEGAL_SUPPORT_THREAD_TRANSITION:${thread.state}:${next}`);
+    return this.database.updateSupportThread(thread.id, { ...patch, state: next })!;
+  }
+  private callSecret(): string {
+    return this.config.CALL_TOKEN_SECRET || this.config.SESSION_SECRET || "liaison-development-call-token";
+  }
+  private actionSecret(): string {
+    return (
+      this.config.ACTION_LINK_SECRET ||
+      this.config.CALL_TOKEN_SECRET ||
+      this.config.SESSION_SECRET ||
+      "liaison-development-action-token"
+    );
+  }
+  private makeSmsAdapter(): TwilioSmsMessagingAdapter | null {
+    try {
+      if (!this.config.TWILIO_ACCOUNT_SID || !this.config.TWILIO_AUTH_TOKEN) return null;
+      return new TwilioSmsMessagingAdapter({
+        accountSid: this.config.TWILIO_ACCOUNT_SID,
+        authToken: this.config.TWILIO_AUTH_TOKEN,
+        inboundWebhookUrl: `${this.config.PUBLIC_BASE_URL}/webhooks/twilio/messaging/inbound`,
+        statusCallbackUrl: `${this.config.PUBLIC_BASE_URL}/webhooks/twilio/messaging/status`,
+        messagingServiceSid: this.config.TWILIO_MESSAGING_SERVICE_SID || undefined,
+        fromNumber: this.config.TWILIO_SMS_FROM_NUMBER || undefined,
+      });
+    } catch {
+      return null;
+    }
+  }
 }
 
-function padIssue(value:string):string{return value.length>=20?value:`${value}. Customer support assistance is requested.`;}
-function draftObject(value:unknown):Record<string,unknown>{return value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};}
-function checkpointFromDraft(value:unknown):PlanCheckpoint|null{const result=planCheckpointSchema.safeParse(draftObject(value).planCheckpoint);return result.success?result.data:null;}
-function stableParameterString(parameters:ProviderFormParameters):string{return Object.entries(parameters).sort(([a],[b])=>a.localeCompare(b)).map(([key,value])=>`${key}=${Array.isArray(value)?value.join(","):String(value)}`).join("&");}
-function safeError(error:unknown):string{return error instanceof Error?error.message.replace(/[A-Za-z0-9_-]{24,}/g,"[FILTERED]").slice(0,240):"UNKNOWN_ERROR";}
-function providerState(status:string):"QUEUED"|"SENT"|"DELIVERED"|"FAILED"|"UNDELIVERED"|"UNKNOWN"{const normalized=status.toUpperCase();if(normalized==="DELIVERED"||normalized==="SENT"||normalized==="QUEUED"||normalized==="FAILED"||normalized==="UNDELIVERED")return normalized;return normalized==="ACCEPTED"?"QUEUED":"UNKNOWN";}
-function deliveryReducer(events:readonly MessageDeliveryEventRecord[],current:OutboundMessageRecord){let state=undefined;for(const event of events)state=reduceMessageDelivery(state,{status:event.providerStatus,observedAt:event.occurredAt,errorCode:event.errorCode??undefined});const final=state?.status??current.deliveryState.toLowerCase();return{deliveryState:providerState(final),errorCode:state?.failure?.errorCode??null,deliveredAt:final==="delivered"?state?.statusAt:null};}
+function padIssue(value: string): string {
+  return value.length >= 20 ? value : `${value}. Customer support assistance is requested.`;
+}
+function draftObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+function checkpointFromDraft(value: unknown): PlanCheckpoint | null {
+  const result = planCheckpointSchema.safeParse(draftObject(value).planCheckpoint);
+  return result.success ? result.data : null;
+}
+function stableParameterString(parameters: ProviderFormParameters): string {
+  return Object.entries(parameters)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(",") : String(value)}`)
+    .join("&");
+}
+function safeError(error: unknown): string {
+  return error instanceof Error
+    ? error.message.replace(/[A-Za-z0-9_-]{24,}/g, "[FILTERED]").slice(0, 240)
+    : "UNKNOWN_ERROR";
+}
+function providerState(status: string): "QUEUED" | "SENT" | "DELIVERED" | "FAILED" | "UNDELIVERED" | "UNKNOWN" {
+  const normalized = status.toUpperCase();
+  if (
+    normalized === "DELIVERED" ||
+    normalized === "SENT" ||
+    normalized === "QUEUED" ||
+    normalized === "FAILED" ||
+    normalized === "UNDELIVERED"
+  )
+    return normalized;
+  return normalized === "ACCEPTED" ? "QUEUED" : "UNKNOWN";
+}
+function deliveryReducer(events: readonly MessageDeliveryEventRecord[], current: OutboundMessageRecord) {
+  let state = undefined;
+  for (const event of events)
+    state = reduceMessageDelivery(state, {
+      status: event.providerStatus,
+      observedAt: event.occurredAt,
+      errorCode: event.errorCode ?? undefined,
+    });
+  const final = state?.status ?? current.deliveryState.toLowerCase();
+  return {
+    deliveryState: providerState(final),
+    errorCode: state?.failure?.errorCode ?? null,
+    deliveredAt: final === "delivered" ? state?.statusAt : null,
+  };
+}

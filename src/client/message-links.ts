@@ -14,14 +14,27 @@ export function safeSameOriginActionHref(candidate: string, origin: string): str
     const expectedOrigin = new URL(origin);
     const url = new URL(candidate, expectedOrigin);
     const match = url.pathname.match(/^\/a\/([^/]+)\/?$/);
-    if (url.origin !== expectedOrigin.origin || url.protocol !== expectedOrigin.protocol || url.username || url.password || url.search || url.hash || !match || !actionTokenPattern.test(match[1])) return null;
+    if (
+      url.origin !== expectedOrigin.origin ||
+      url.protocol !== expectedOrigin.protocol ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !match ||
+      !actionTokenPattern.test(match[1])
+    )
+      return null;
     return `/a/${match[1]}`;
   } catch {
     return null;
   }
 }
 
-export function sameOriginActionLinkParts(part: string, origin: string): { prefix: string; href: string; suffix: string } | null {
+export function sameOriginActionLinkParts(
+  part: string,
+  origin: string,
+): { prefix: string; href: string; suffix: string } | null {
   const { prefix, candidate, suffix } = candidateParts(part);
   const href = safeSameOriginActionHref(candidate, origin);
   return href ? { prefix, href, suffix } : null;
@@ -33,14 +46,27 @@ export function safeSameOriginCallHref(candidate: string, origin: string): strin
     const expectedOrigin = new URL(origin);
     const url = new URL(candidate, expectedOrigin);
     const match = url.pathname.match(/^\/calls\/([^/]+)\/?$/);
-    if (url.origin !== expectedOrigin.origin || url.protocol !== expectedOrigin.protocol || url.username || url.password || url.search || url.hash || !match || !callIdPattern.test(match[1])) return null;
+    if (
+      url.origin !== expectedOrigin.origin ||
+      url.protocol !== expectedOrigin.protocol ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !match ||
+      !callIdPattern.test(match[1])
+    )
+      return null;
     return `/calls/${match[1]}`;
   } catch {
     return null;
   }
 }
 
-export function sameOriginCallLinkParts(part: string, origin: string): { prefix: string; href: string; suffix: string } | null {
+export function sameOriginCallLinkParts(
+  part: string,
+  origin: string,
+): { prefix: string; href: string; suffix: string } | null {
   const { prefix, candidate, suffix } = candidateParts(part);
   const href = safeSameOriginCallHref(candidate, origin);
   return href ? { prefix, href, suffix } : null;

@@ -164,7 +164,7 @@ export class TwilioSmsMessagingAdapter implements MessagingAdapter {
     if (!this.messagingServiceSid && !this.fromNumber) {
       throw new Error("TWILIO_SMS_SENDER_REQUIRED");
     }
-    this.client = options.client ?? (twilio(options.accountSid, options.authToken));
+    this.client = options.client ?? twilio(options.accountSid, options.authToken);
   }
 
   async sendText(input: OutboundTextMessage): Promise<OutboundMessageResult> {
@@ -172,9 +172,7 @@ export class TwilioSmsMessagingAdapter implements MessagingAdapter {
       to: input.to,
       body: input.body,
       statusCallback: this.options.statusCallbackUrl,
-      ...(this.messagingServiceSid
-        ? { messagingServiceSid: this.messagingServiceSid }
-        : { from: this.fromNumber }),
+      ...(this.messagingServiceSid ? { messagingServiceSid: this.messagingServiceSid } : { from: this.fromNumber }),
     };
     const message = await this.client.messages.create(request);
     return {
@@ -185,9 +183,8 @@ export class TwilioSmsMessagingAdapter implements MessagingAdapter {
 
   async validateInboundRequest(input: InboundProviderRequest): Promise<InboundValidationResult> {
     if (!input.signature) return { valid: false, reason: "MISSING_SIGNATURE" };
-    const canonicalUrl = input.callbackKind === "INBOUND_MESSAGE"
-      ? this.options.inboundWebhookUrl
-      : this.options.statusCallbackUrl;
+    const canonicalUrl =
+      input.callbackKind === "INBOUND_MESSAGE" ? this.options.inboundWebhookUrl : this.options.statusCallbackUrl;
     const valid = twilio.validateRequest(
       this.options.authToken,
       input.signature,
@@ -211,9 +208,7 @@ export class TwilioSmsMessagingAdapter implements MessagingAdapter {
       to: requireValue(input.form, "To"),
       body: requireBody(input.form),
       numMedia: parseNumMedia(input.form),
-      ...(optionalValue(input.form, "OptOutType")
-        ? { optOutType: optionalValue(input.form, "OptOutType") }
-        : {}),
+      ...(optionalValue(input.form, "OptOutType") ? { optOutType: optionalValue(input.form, "OptOutType") } : {}),
       parameters: copyFormParameters(input.form),
     };
   }

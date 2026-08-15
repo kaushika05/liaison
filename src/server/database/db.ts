@@ -2,11 +2,51 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
-import type { ApprovalRequest, CallBrief, CallState, EventType, OutcomeReport, TranscriptTurn } from "../../shared/domain.js";
+import type {
+  ApprovalRequest,
+  CallBrief,
+  CallState,
+  EventType,
+  OutcomeReport,
+  TranscriptTurn,
+} from "../../shared/domain.js";
 import type { CaseDetail, CaseSummary } from "../../shared/api.js";
 
-interface CallRow { id: string; case_id: string; mode: "SIMULATOR" | "TWILIO"; scenario_id: string | null; state: CallState; activity: string; objective: string; paused: number; human_detected: number; disclosure_delivered: number; consent_status: "UNKNOWN" | "ACCEPTED" | "REFUSED" | "AMBIGUOUS"; generation: number; twilio_call_sid: string | null; authorization_id: string | null; started_at: string; ended_at: string | null; duration_seconds: number; estimated_cost_usd: number; llm_input_tokens:number; llm_output_tokens:number; terminal_reason: string | null; }
-interface CaseRow { id: string; company_name: string; title: string; status: string; intake_json: string; brief_json: string | null; disclosure_metadata_json: string; approved_version: number | null; created_at: string; updated_at: string }
+interface CallRow {
+  id: string;
+  case_id: string;
+  mode: "SIMULATOR" | "TWILIO";
+  scenario_id: string | null;
+  state: CallState;
+  activity: string;
+  objective: string;
+  paused: number;
+  human_detected: number;
+  disclosure_delivered: number;
+  consent_status: "UNKNOWN" | "ACCEPTED" | "REFUSED" | "AMBIGUOUS";
+  generation: number;
+  twilio_call_sid: string | null;
+  authorization_id: string | null;
+  started_at: string;
+  ended_at: string | null;
+  duration_seconds: number;
+  estimated_cost_usd: number;
+  llm_input_tokens: number;
+  llm_output_tokens: number;
+  terminal_reason: string | null;
+}
+interface CaseRow {
+  id: string;
+  company_name: string;
+  title: string;
+  status: string;
+  intake_json: string;
+  brief_json: string | null;
+  disclosure_metadata_json: string;
+  approved_version: number | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export type SupportThreadState =
   | "IDLE"
@@ -26,7 +66,15 @@ export type AutonomyMode = "ASSIST" | "COPILOT" | "DELEGATE";
 export type MessagingOptState = "UNKNOWN" | "OPTED_IN" | "OPTED_OUT";
 export type MessagingProviderKind = "WEB" | "TWILIO_SMS" | "SIMULATOR";
 export type MessageProcessingState = "RECEIVED" | "PENDING" | "PROCESSING" | "COMPLETED" | "DEAD_LETTER" | "REJECTED";
-export type MessageDeliveryState = "RECEIVED" | "PENDING" | "QUEUED" | "SENT" | "DELIVERED" | "UNDELIVERED" | "FAILED" | "UNKNOWN";
+export type MessageDeliveryState =
+  | "RECEIVED"
+  | "PENDING"
+  | "QUEUED"
+  | "SENT"
+  | "DELIVERED"
+  | "UNDELIVERED"
+  | "FAILED"
+  | "UNKNOWN";
 export type WorkState = "PENDING" | "PROCESSING" | "COMPLETED" | "DEAD_LETTER";
 export type AttentionTier = "INFORMATIONAL" | "LOW_CONSEQUENCE" | "SENSITIVE" | "MATERIAL" | "PROHIBITED";
 export type AttentionStatus = "PENDING" | "RESOLVED" | "EXPIRED" | "SUPERSEDED" | "CANCELLED";
@@ -74,7 +122,11 @@ export interface InboundMessageInput {
   idempotencyKey: string;
 }
 
-export interface InboundMessageRecord extends Omit<InboundMessageInput, "providerMessageId" | "caseId" | "callId" | "attentionRequestId" | "createdAt" | "errorCode"> {
+export interface InboundMessageRecord
+  extends Omit<
+    InboundMessageInput,
+    "providerMessageId" | "caseId" | "callId" | "attentionRequestId" | "createdAt" | "errorCode"
+  > {
   providerMessageId: string | null;
   direction: "INBOUND";
   caseId: string | null;
@@ -124,7 +176,11 @@ export interface OutboundMessageInput {
   nextEligibleAt?: string;
 }
 
-export interface OutboundMessageRecord extends Omit<OutboundMessageInput, "providerMessageId" | "caseId" | "callId" | "attentionRequestId" | "createdAt" | "errorCode" | "nextEligibleAt"> {
+export interface OutboundMessageRecord
+  extends Omit<
+    OutboundMessageInput,
+    "providerMessageId" | "caseId" | "callId" | "attentionRequestId" | "createdAt" | "errorCode" | "nextEligibleAt"
+  > {
   providerMessageId: string | null;
   direction: "OUTBOUND";
   caseId: string | null;
@@ -162,7 +218,10 @@ export interface DeliveryReduction {
   deliveredAt?: string | null;
 }
 
-export type DeliveryStatusReducer = (events: readonly MessageDeliveryEventRecord[], current: OutboundMessageRecord) => DeliveryReduction;
+export type DeliveryStatusReducer = (
+  events: readonly MessageDeliveryEventRecord[],
+  current: OutboundMessageRecord,
+) => DeliveryReduction;
 
 export interface AttentionRequestRecord {
   id: string;
@@ -226,7 +285,10 @@ export interface ProviderSecurityEventRecord {
   createdAt: string;
 }
 
-export interface EvidenceReferenceRecord { turnId: string; exactQuote: string }
+export interface EvidenceReferenceRecord {
+  turnId: string;
+  exactQuote: string;
+}
 
 export interface CommitmentRecord {
   id: string;
@@ -283,19 +345,204 @@ export interface ApprovalExecutionRecord {
   errorCode: string | null;
 }
 
-interface SupportThreadRow { id:string; principal_id:string; state:SupportThreadState; autonomy_mode:AutonomyMode; current_case_id:string|null; approved_plan_version:number|null; active_call_id:string|null; pending_attention_request_id:string|null; messaging_opt_state:MessagingOptState; draft_json:string|null; is_active:number; created_at:string; updated_at:string }
-interface InboundMessageRow { id:string; thread_id:string; provider_kind:MessagingProviderKind; provider_message_id:string|null; direction:"INBOUND"; redacted_body:string; sender:string; recipient:string; case_id:string|null; call_id:string|null; attention_request_id:string|null; created_at:string; processing_state:MessageProcessingState; delivery_state:MessageDeliveryState; status_updated_at:string; processed_at:string|null; segment_estimate:number; error_code:string|null; idempotency_key:string }
-interface OutboundMessageRow { id:string; thread_id:string; provider_kind:MessagingProviderKind; provider_message_id:string|null; direction:"OUTBOUND"; redacted_body:string; sender:string; recipient:string; case_id:string|null; call_id:string|null; attention_request_id:string|null; created_at:string; processing_state:MessageProcessingState; delivery_state:MessageDeliveryState; status_updated_at:string; processed_at:string|null; delivered_at:string|null; segment_estimate:number; error_code:string|null; idempotency_key:string; lease_owner:string|null; lease_expires_at:string|null; attempt_count:number; last_error:string|null; next_eligible_at:string }
-interface WorkItemRow { id:string; kind:string; inbound_message_id:string|null; outbound_message_id:string|null; payload_json:string; state:WorkState; lease_owner:string|null; lease_expires_at:string|null; attempt_count:number; last_error:string|null; next_eligible_at:string; idempotency_key:string; created_at:string; updated_at:string; completed_at:string|null }
-interface DeliveryEventRow { id:string; outbound_message_id:string; provider_message_id:string|null; provider_status:string; error_code:string|null; occurred_at:string; received_at:string; event_key:string }
-interface AttentionRequestRow { id:string; thread_id:string; case_id:string|null; call_id:string|null; tier:AttentionTier; status:AttentionStatus; blocking:number; question:string; choices_json:string; proposed_action_json:string|null; resolution_json:string|null; created_at:string; expires_at:string; resolved_at:string|null; superseded_by:string|null }
-interface SecureActionTokenRow { id:string; token_hash:string; action_type:string; thread_id:string; case_id:string|null; call_id:string|null; attention_request_id:string|null; single_use:number; created_at:string; expires_at:string; used_at:string|null; revoked_at:string|null; revoke_reason:string|null }
-interface CallAuthorizationRow { id:string; thread_id:string; case_id:string; plan_version:number; destination_e164:string|null; telephony_mode:"simulator"|"twilio"|null; code_hash:string; created_at:string; expires_at:string; consumed_at:string|null; revoked_at:string|null; revoke_reason:string|null }
-interface ProviderSecurityEventRow { id:string; provider_kind:MessagingProviderKind; provider_message_id:string; event_type:string; reason_code:string; thread_id:string|null; case_id:string|null; call_id:string|null; redacted_metadata_json:string; created_at:string }
-interface CommitmentRow { id:string; thread_id:string; case_id:string; call_id:string|null; party:CommitmentParty; status:CommitmentStatus; description:string; amount_cents:number|null; deadline:string|null; recurring:number|null; evidence_json:string; created_at:string; updated_at:string }
-interface SemanticCallEventRow { id:string; thread_id:string; case_id:string; call_id:string; event_type:string; semantic_key:string; payload_json:string; occurred_at:string; created_at:string }
-interface ConditionalAuthorityRuleRow { id:string; thread_id:string; case_id:string|null; action_type:string; condition_json:string; permission:"ALLOW"|"ASK"|"DENY"; priority:number; active:number; created_at:string; updated_at:string }
-interface ApprovalExecutionRow { approval_id:string; call_id:string; decision:"APPROVE"|"REJECT"; payload_fingerprint:string; target_status:"APPROVED"|"REJECTED"|"REPLACED"; execution_id:string; state:ApprovalExecutionState; reserved_at:string; completed_at:string|null; error_code:string|null }
+interface SupportThreadRow {
+  id: string;
+  principal_id: string;
+  state: SupportThreadState;
+  autonomy_mode: AutonomyMode;
+  current_case_id: string | null;
+  approved_plan_version: number | null;
+  active_call_id: string | null;
+  pending_attention_request_id: string | null;
+  messaging_opt_state: MessagingOptState;
+  draft_json: string | null;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+interface InboundMessageRow {
+  id: string;
+  thread_id: string;
+  provider_kind: MessagingProviderKind;
+  provider_message_id: string | null;
+  direction: "INBOUND";
+  redacted_body: string;
+  sender: string;
+  recipient: string;
+  case_id: string | null;
+  call_id: string | null;
+  attention_request_id: string | null;
+  created_at: string;
+  processing_state: MessageProcessingState;
+  delivery_state: MessageDeliveryState;
+  status_updated_at: string;
+  processed_at: string | null;
+  segment_estimate: number;
+  error_code: string | null;
+  idempotency_key: string;
+}
+interface OutboundMessageRow {
+  id: string;
+  thread_id: string;
+  provider_kind: MessagingProviderKind;
+  provider_message_id: string | null;
+  direction: "OUTBOUND";
+  redacted_body: string;
+  sender: string;
+  recipient: string;
+  case_id: string | null;
+  call_id: string | null;
+  attention_request_id: string | null;
+  created_at: string;
+  processing_state: MessageProcessingState;
+  delivery_state: MessageDeliveryState;
+  status_updated_at: string;
+  processed_at: string | null;
+  delivered_at: string | null;
+  segment_estimate: number;
+  error_code: string | null;
+  idempotency_key: string;
+  lease_owner: string | null;
+  lease_expires_at: string | null;
+  attempt_count: number;
+  last_error: string | null;
+  next_eligible_at: string;
+}
+interface WorkItemRow {
+  id: string;
+  kind: string;
+  inbound_message_id: string | null;
+  outbound_message_id: string | null;
+  payload_json: string;
+  state: WorkState;
+  lease_owner: string | null;
+  lease_expires_at: string | null;
+  attempt_count: number;
+  last_error: string | null;
+  next_eligible_at: string;
+  idempotency_key: string;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+interface DeliveryEventRow {
+  id: string;
+  outbound_message_id: string;
+  provider_message_id: string | null;
+  provider_status: string;
+  error_code: string | null;
+  occurred_at: string;
+  received_at: string;
+  event_key: string;
+}
+interface AttentionRequestRow {
+  id: string;
+  thread_id: string;
+  case_id: string | null;
+  call_id: string | null;
+  tier: AttentionTier;
+  status: AttentionStatus;
+  blocking: number;
+  question: string;
+  choices_json: string;
+  proposed_action_json: string | null;
+  resolution_json: string | null;
+  created_at: string;
+  expires_at: string;
+  resolved_at: string | null;
+  superseded_by: string | null;
+}
+interface SecureActionTokenRow {
+  id: string;
+  token_hash: string;
+  action_type: string;
+  thread_id: string;
+  case_id: string | null;
+  call_id: string | null;
+  attention_request_id: string | null;
+  single_use: number;
+  created_at: string;
+  expires_at: string;
+  used_at: string | null;
+  revoked_at: string | null;
+  revoke_reason: string | null;
+}
+interface CallAuthorizationRow {
+  id: string;
+  thread_id: string;
+  case_id: string;
+  plan_version: number;
+  destination_e164: string | null;
+  telephony_mode: "simulator" | "twilio" | null;
+  code_hash: string;
+  created_at: string;
+  expires_at: string;
+  consumed_at: string | null;
+  revoked_at: string | null;
+  revoke_reason: string | null;
+}
+interface ProviderSecurityEventRow {
+  id: string;
+  provider_kind: MessagingProviderKind;
+  provider_message_id: string;
+  event_type: string;
+  reason_code: string;
+  thread_id: string | null;
+  case_id: string | null;
+  call_id: string | null;
+  redacted_metadata_json: string;
+  created_at: string;
+}
+interface CommitmentRow {
+  id: string;
+  thread_id: string;
+  case_id: string;
+  call_id: string | null;
+  party: CommitmentParty;
+  status: CommitmentStatus;
+  description: string;
+  amount_cents: number | null;
+  deadline: string | null;
+  recurring: number | null;
+  evidence_json: string;
+  created_at: string;
+  updated_at: string;
+}
+interface SemanticCallEventRow {
+  id: string;
+  thread_id: string;
+  case_id: string;
+  call_id: string;
+  event_type: string;
+  semantic_key: string;
+  payload_json: string;
+  occurred_at: string;
+  created_at: string;
+}
+interface ConditionalAuthorityRuleRow {
+  id: string;
+  thread_id: string;
+  case_id: string | null;
+  action_type: string;
+  condition_json: string;
+  permission: "ALLOW" | "ASK" | "DENY";
+  priority: number;
+  active: number;
+  created_at: string;
+  updated_at: string;
+}
+interface ApprovalExecutionRow {
+  approval_id: string;
+  call_id: string;
+  decision: "APPROVE" | "REJECT";
+  payload_fingerprint: string;
+  target_status: "APPROVED" | "REJECTED" | "REPLACED";
+  execution_id: string;
+  state: ApprovalExecutionState;
+  reserved_at: string;
+  completed_at: string | null;
+  error_code: string | null;
+}
 
 const parseJson = (value: string): unknown => JSON.parse(value) as unknown;
 const leaseExpiry = (now: string, leaseSeconds: number): string => {
@@ -508,7 +755,8 @@ export class LiaisonDatabase {
   constructor(filename: string) {
     if (filename !== ":memory:") fs.mkdirSync(path.dirname(path.resolve(filename)), { recursive: true });
     this.db = new Database(filename);
-    this.db.pragma("journal_mode = WAL"); this.db.pragma("foreign_keys = ON");
+    this.db.pragma("journal_mode = WAL");
+    this.db.pragma("foreign_keys = ON");
     // The retention job and backup tooling open the same file, so a writer should wait briefly
     // rather than fail immediately with SQLITE_BUSY.
     this.db.pragma("busy_timeout = 5000");
@@ -542,10 +790,14 @@ export class LiaisonDatabase {
       CREATE INDEX IF NOT EXISTS idx_events_call_sequence ON events(call_id, sequence);
       CREATE INDEX IF NOT EXISTS idx_transcript_call_sequence ON transcript_turns(call_id, sequence);
     `);
-    const callColumns=new Set((this.db.pragma("table_info(calls)") as Array<{name:string}>).map((column)=>column.name));
-    if(!callColumns.has("llm_input_tokens")) this.db.exec("ALTER TABLE calls ADD COLUMN llm_input_tokens INTEGER NOT NULL DEFAULT 0");
-    if(!callColumns.has("llm_output_tokens")) this.db.exec("ALTER TABLE calls ADD COLUMN llm_output_tokens INTEGER NOT NULL DEFAULT 0");
-    if(!callColumns.has("authorization_id")) this.db.exec("ALTER TABLE calls ADD COLUMN authorization_id TEXT");
+    const callColumns = new Set(
+      (this.db.pragma("table_info(calls)") as Array<{ name: string }>).map((column) => column.name),
+    );
+    if (!callColumns.has("llm_input_tokens"))
+      this.db.exec("ALTER TABLE calls ADD COLUMN llm_input_tokens INTEGER NOT NULL DEFAULT 0");
+    if (!callColumns.has("llm_output_tokens"))
+      this.db.exec("ALTER TABLE calls ADD COLUMN llm_output_tokens INTEGER NOT NULL DEFAULT 0");
+    if (!callColumns.has("authorization_id")) this.db.exec("ALTER TABLE calls ADD COLUMN authorization_id TEXT");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
@@ -792,72 +1044,147 @@ export class LiaisonDatabase {
         DELETE FROM events WHERE case_id=OLD.id OR call_id IN (SELECT id FROM calls WHERE case_id=OLD.id);
       END;
     `);
-    const authorizationColumns = new Set((this.db.pragma("table_info(call_authorizations)") as Array<{name:string}>).map((column) => column.name));
-    if (!authorizationColumns.has("destination_e164")) this.db.exec("ALTER TABLE call_authorizations ADD COLUMN destination_e164 TEXT");
-    if (!authorizationColumns.has("telephony_mode")) this.db.exec("ALTER TABLE call_authorizations ADD COLUMN telephony_mode TEXT CHECK (telephony_mode IS NULL OR telephony_mode IN ('simulator','twilio'))");
-    this.db.prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES (?,?,?)")
+    const authorizationColumns = new Set(
+      (this.db.pragma("table_info(call_authorizations)") as Array<{ name: string }>).map((column) => column.name),
+    );
+    if (!authorizationColumns.has("destination_e164"))
+      this.db.exec("ALTER TABLE call_authorizations ADD COLUMN destination_e164 TEXT");
+    if (!authorizationColumns.has("telephony_mode"))
+      this.db.exec(
+        "ALTER TABLE call_authorizations ADD COLUMN telephony_mode TEXT CHECK (telephony_mode IS NULL OR telephony_mode IN ('simulator','twilio'))",
+      );
+    this.db
+      .prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES (?,?,?)")
       .run(1, "sms_first_durable_messaging", new Date().toISOString());
-    this.db.prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES (?,?,?)")
+    this.db
+      .prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES (?,?,?)")
       .run(2, "provider_security_and_authorization_binding", new Date().toISOString());
-    this.db.prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES (?,?,?)")
+    this.db
+      .prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES (?,?,?)")
       .run(3, "call_authorization_audit_link", new Date().toISOString());
-    this.db.prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES (?,?,?)")
+    this.db
+      .prepare("INSERT OR IGNORE INTO schema_migrations(version,name,applied_at) VALUES (?,?,?)")
       .run(4, "durable_approval_execution", new Date().toISOString());
     this.db.pragma("optimize");
   }
 
-  close(): void { this.db.close(); }
-  ready(): boolean { return this.db.prepare("SELECT 1 AS ok").get() !== undefined; }
+  close(): void {
+    this.db.close();
+  }
+  ready(): boolean {
+    return this.db.prepare("SELECT 1 AS ok").get() !== undefined;
+  }
 
-  createCase(input: { id: string; companyName: string; title: string; intake: unknown; disclosureMetadata: unknown[] }): void {
+  createCase(input: {
+    id: string;
+    companyName: string;
+    title: string;
+    intake: unknown;
+    disclosureMetadata: unknown[];
+  }): void {
     const now = new Date().toISOString();
-    this.db.prepare("INSERT INTO cases (id, company_name, title, status, intake_json, disclosure_metadata_json, created_at, updated_at) VALUES (?, ?, ?, 'DRAFT', ?, ?, ?, ?)")
-      .run(input.id, input.companyName, input.title, JSON.stringify(input.intake), JSON.stringify(input.disclosureMetadata), now, now);
+    this.db
+      .prepare(
+        "INSERT INTO cases (id, company_name, title, status, intake_json, disclosure_metadata_json, created_at, updated_at) VALUES (?, ?, ?, 'DRAFT', ?, ?, ?, ?)",
+      )
+      .run(
+        input.id,
+        input.companyName,
+        input.title,
+        JSON.stringify(input.intake),
+        JSON.stringify(input.disclosureMetadata),
+        now,
+        now,
+      );
   }
   appendCaseDisclosureMetadata(caseId: string, metadata: CaseDetail["disclosures"][number]): CaseDetail["disclosures"] {
     return this.db.transaction(() => {
-      const row = this.db.prepare("SELECT disclosure_metadata_json FROM cases WHERE id=?").get(caseId) as Pick<CaseRow,"disclosure_metadata_json"> | undefined;
+      const row = this.db.prepare("SELECT disclosure_metadata_json FROM cases WHERE id=?").get(caseId) as
+        | Pick<CaseRow, "disclosure_metadata_json">
+        | undefined;
       if (!row) throw new Error("CASE_NOT_FOUND");
       const existing = JSON.parse(row.disclosure_metadata_json) as CaseDetail["disclosures"];
       if (existing.length >= 12) throw new Error("DISCLOSURE_LIMIT_REACHED");
       const next = [...existing, metadata];
-      this.db.prepare("UPDATE cases SET disclosure_metadata_json=?,updated_at=? WHERE id=?")
+      this.db
+        .prepare("UPDATE cases SET disclosure_metadata_json=?,updated_at=? WHERE id=?")
         .run(JSON.stringify(next), new Date().toISOString(), caseId);
       return next;
     })();
   }
   listCases(): CaseSummary[] {
-    return (this.db.prepare("SELECT id, company_name, title, status, updated_at FROM cases ORDER BY updated_at DESC").all() as Array<Pick<CaseRow,"id"|"company_name"|"title"|"status"|"updated_at">>)
-      .map((r) => ({ id: r.id, companyName: r.company_name, title: r.title, status: r.status, updatedAt: r.updated_at }));
+    return (
+      this.db
+        .prepare("SELECT id, company_name, title, status, updated_at FROM cases ORDER BY updated_at DESC")
+        .all() as Array<Pick<CaseRow, "id" | "company_name" | "title" | "status" | "updated_at">>
+    ).map((r) => ({
+      id: r.id,
+      companyName: r.company_name,
+      title: r.title,
+      status: r.status,
+      updatedAt: r.updated_at,
+    }));
   }
   getCase(id: string): CaseDetail | null {
     const r = this.db.prepare("SELECT * FROM cases WHERE id = ?").get(id) as CaseRow | undefined;
-    return r ? { id: r.id, companyName: r.company_name, title: r.title, status: r.status, createdAt: r.created_at, updatedAt: r.updated_at, intake: JSON.parse(r.intake_json) as Record<string, unknown>, brief: r.brief_json ? JSON.parse(r.brief_json) as CallBrief : null, approvedVersion: r.approved_version, disclosures: JSON.parse(r.disclosure_metadata_json) as CaseDetail["disclosures"] } : null;
+    return r
+      ? {
+          id: r.id,
+          companyName: r.company_name,
+          title: r.title,
+          status: r.status,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+          intake: JSON.parse(r.intake_json) as Record<string, unknown>,
+          brief: r.brief_json ? (JSON.parse(r.brief_json) as CallBrief) : null,
+          approvedVersion: r.approved_version,
+          disclosures: JSON.parse(r.disclosure_metadata_json) as CaseDetail["disclosures"],
+        }
+      : null;
   }
   savePlan(caseId: string, brief: CallBrief): void {
     const now = new Date().toISOString();
     this.db.transaction(() => {
-      this.db.prepare("UPDATE cases SET brief_json=?, title=?, status='PLANNED', approved_version=NULL, updated_at=? WHERE id=?")
+      this.db
+        .prepare(
+          "UPDATE cases SET brief_json=?, title=?, status='PLANNED', approved_version=NULL, updated_at=? WHERE id=?",
+        )
         .run(JSON.stringify(brief), brief.title, now, caseId);
-      this.db.prepare("UPDATE support_threads SET approved_plan_version=NULL,state='PLAN_DRAFTED',updated_at=? WHERE current_case_id=? AND state NOT IN ('CALL_STARTING','CALL_ACTIVE','AWAITING_USER_DECISION','CALL_ENDING')")
+      this.db
+        .prepare(
+          "UPDATE support_threads SET approved_plan_version=NULL,state='PLAN_DRAFTED',updated_at=? WHERE current_case_id=? AND state NOT IN ('CALL_STARTING','CALL_ACTIVE','AWAITING_USER_DECISION','CALL_ENDING')",
+        )
         .run(now, caseId);
-      this.db.prepare("UPDATE call_authorizations SET revoked_at=?,revoke_reason='PLAN_CHANGED' WHERE case_id=? AND consumed_at IS NULL AND revoked_at IS NULL")
+      this.db
+        .prepare(
+          "UPDATE call_authorizations SET revoked_at=?,revoke_reason='PLAN_CHANGED' WHERE case_id=? AND consumed_at IS NULL AND revoked_at IS NULL",
+        )
         .run(now, caseId);
     })();
   }
-  approvePlan(caseId: string, version: number): void { this.db.prepare("UPDATE cases SET approved_version=?, status='APPROVED', updated_at=? WHERE id=? AND json_extract(brief_json, '$.version')=?").run(version, new Date().toISOString(), caseId, version); }
+  approvePlan(caseId: string, version: number): void {
+    this.db
+      .prepare(
+        "UPDATE cases SET approved_version=?, status='APPROVED', updated_at=? WHERE id=? AND json_extract(brief_json, '$.version')=?",
+      )
+      .run(version, new Date().toISOString(), caseId, version);
+  }
   deleteCase(id: string): CaseDeletionResult {
     return this.db.transaction(() => {
       const exists = this.db.prepare("SELECT 1 FROM cases WHERE id=?").get(id);
       if (!exists) throw new Error("CASE_NOT_FOUND");
-      const activeCall = this.db.prepare("SELECT id FROM calls WHERE case_id=? AND state NOT IN ('COMPLETED','FAILED') LIMIT 1")
-        .get(id) as {id:string}|undefined;
+      const activeCall = this.db
+        .prepare("SELECT id FROM calls WHERE case_id=? AND state NOT IN ('COMPLETED','FAILED') LIMIT 1")
+        .get(id) as { id: string } | undefined;
       if (activeCall) throw new Error("ACTIVE_CALL_CANNOT_BE_DELETED");
 
-      const callIds = (this.db.prepare("SELECT id FROM calls WHERE case_id=? ORDER BY id").all(id) as Array<{id:string}>)
-        .map((row) => row.id);
+      const callIds = (
+        this.db.prepare("SELECT id FROM calls WHERE case_id=? ORDER BY id").all(id) as Array<{ id: string }>
+      ).map((row) => row.id);
 
-      const affectedThreads = this.db.prepare(`WITH affected_threads(id) AS (
+      const affectedThreads = this.db
+        .prepare(
+          `WITH affected_threads(id) AS (
           SELECT id FROM support_threads WHERE current_case_id=@caseId
           UNION SELECT thread_id FROM inbound_messages WHERE case_id=@caseId OR call_id IN (SELECT id FROM calls WHERE case_id=@caseId)
           UNION SELECT thread_id FROM outbound_messages WHERE case_id=@caseId OR call_id IN (SELECT id FROM calls WHERE case_id=@caseId)
@@ -869,54 +1196,87 @@ export class LiaisonDatabase {
           UNION SELECT thread_id FROM call_authorizations WHERE case_id=@caseId
           UNION SELECT id FROM support_threads WHERE active_call_id IN (SELECT id FROM calls WHERE case_id=@caseId)
         )
-        SELECT id,principal_id,active_call_id FROM support_threads WHERE id IN (SELECT id FROM affected_threads)`)
-        .all({caseId:id}) as Array<{id:string;principal_id:string;active_call_id:string|null}>;
+        SELECT id,principal_id,active_call_id FROM support_threads WHERE id IN (SELECT id FROM affected_threads)`,
+        )
+        .all({ caseId: id }) as Array<{ id: string; principal_id: string; active_call_id: string | null }>;
 
       const inboundMessageIds = affectedThreads.flatMap((thread) =>
-        (this.db.prepare("SELECT id FROM inbound_messages WHERE thread_id=? ORDER BY id").all(thread.id) as Array<{id:string}>).map((row) => row.id));
+        (
+          this.db.prepare("SELECT id FROM inbound_messages WHERE thread_id=? ORDER BY id").all(thread.id) as Array<{
+            id: string;
+          }>
+        ).map((row) => row.id),
+      );
       const outboundMessageIds = affectedThreads.flatMap((thread) =>
-        (this.db.prepare("SELECT id FROM outbound_messages WHERE thread_id=? ORDER BY id").all(thread.id) as Array<{id:string}>).map((row) => row.id));
+        (
+          this.db.prepare("SELECT id FROM outbound_messages WHERE thread_id=? ORDER BY id").all(thread.id) as Array<{
+            id: string;
+          }>
+        ).map((row) => row.id),
+      );
 
       for (const thread of affectedThreads) {
         if (!thread.active_call_id) continue;
-        const call = this.db.prepare("SELECT state FROM calls WHERE id=?").get(thread.active_call_id) as {state:string}|undefined;
+        const call = this.db.prepare("SELECT state FROM calls WHERE id=?").get(thread.active_call_id) as
+          | { state: string }
+          | undefined;
         if (call && !["COMPLETED", "FAILED"].includes(call.state)) throw new Error("ACTIVE_CALL_CANNOT_BE_DELETED");
       }
 
       const principals = [...new Set(affectedThreads.map((thread) => thread.principal_id))].map((principalId) => {
-        const optStates = (this.db.prepare("SELECT messaging_opt_state FROM support_threads WHERE principal_id=?").all(principalId) as Array<{messaging_opt_state:MessagingOptState}>)
-          .map((row) => row.messaging_opt_state);
-        const messagingOptState:MessagingOptState = optStates.includes("OPTED_OUT") ? "OPTED_OUT" : optStates.includes("OPTED_IN") ? "OPTED_IN" : "UNKNOWN";
-        return {principalId,messagingOptState};
+        const optStates = (
+          this.db
+            .prepare("SELECT messaging_opt_state FROM support_threads WHERE principal_id=?")
+            .all(principalId) as Array<{ messaging_opt_state: MessagingOptState }>
+        ).map((row) => row.messaging_opt_state);
+        const messagingOptState: MessagingOptState = optStates.includes("OPTED_OUT")
+          ? "OPTED_OUT"
+          : optStates.includes("OPTED_IN")
+            ? "OPTED_IN"
+            : "UNKNOWN";
+        return { principalId, messagingOptState };
       });
 
       const removeThread = this.db.prepare("DELETE FROM support_threads WHERE id=?");
       for (const thread of affectedThreads) {
-        this.db.prepare("DELETE FROM provider_security_events WHERE thread_id=? OR case_id=? OR call_id IN (SELECT id FROM calls WHERE case_id=?)")
+        this.db
+          .prepare(
+            "DELETE FROM provider_security_events WHERE thread_id=? OR case_id=? OR call_id IN (SELECT id FROM calls WHERE case_id=?)",
+          )
           .run(thread.id, id, id);
       }
       if (affectedThreads.length === 0) {
-        this.db.prepare("DELETE FROM provider_security_events WHERE case_id=? OR call_id IN (SELECT id FROM calls WHERE case_id=?)")
+        this.db
+          .prepare(
+            "DELETE FROM provider_security_events WHERE case_id=? OR call_id IN (SELECT id FROM calls WHERE case_id=?)",
+          )
           .run(id, id);
       }
       for (const thread of affectedThreads) removeThread.run(thread.id);
-      this.db.prepare("DELETE FROM events WHERE case_id=? OR call_id IN (SELECT id FROM calls WHERE case_id=?)").run(id, id);
+      this.db
+        .prepare("DELETE FROM events WHERE case_id=? OR call_id IN (SELECT id FROM calls WHERE case_id=?)")
+        .run(id, id);
       this.db.prepare("DELETE FROM cases WHERE id=?").run(id);
 
       const now = new Date().toISOString();
       for (const principal of principals) {
-        const current = this.db.prepare("SELECT id,messaging_opt_state FROM support_threads WHERE principal_id=? AND is_active=1 LIMIT 1")
-          .get(principal.principalId) as {id:string;messaging_opt_state:MessagingOptState}|undefined;
+        const current = this.db
+          .prepare("SELECT id,messaging_opt_state FROM support_threads WHERE principal_id=? AND is_active=1 LIMIT 1")
+          .get(principal.principalId) as { id: string; messaging_opt_state: MessagingOptState } | undefined;
         if (current) {
           if (current.messaging_opt_state !== principal.messagingOptState) {
-            this.db.prepare("UPDATE support_threads SET messaging_opt_state=?,updated_at=? WHERE id=?")
+            this.db
+              .prepare("UPDATE support_threads SET messaging_opt_state=?,updated_at=? WHERE id=?")
               .run(principal.messagingOptState, now, current.id);
           }
           continue;
         }
-        this.db.prepare(`INSERT INTO support_threads
+        this.db
+          .prepare(
+            `INSERT INTO support_threads
           (id,principal_id,state,autonomy_mode,current_case_id,approved_plan_version,active_call_id,pending_attention_request_id,messaging_opt_state,draft_json,is_active,created_at,updated_at)
-          VALUES (?,?,'IDLE','COPILOT',NULL,NULL,NULL,NULL,?,NULL,1,?,?)`)
+          VALUES (?,?,'IDLE','COPILOT',NULL,NULL,NULL,NULL,?,NULL,1,?,?)`,
+          )
           .run(randomUUID(), principal.principalId, principal.messagingOptState, now, now);
       }
       return {
@@ -935,12 +1295,16 @@ export class LiaisonDatabase {
   }
 
   getActiveSupportThread(principalId: string): SupportThreadRecord | null {
-    const row = this.db.prepare("SELECT * FROM support_threads WHERE principal_id=? AND is_active=1 LIMIT 1").get(principalId) as SupportThreadRow | undefined;
+    const row = this.db
+      .prepare("SELECT * FROM support_threads WHERE principal_id=? AND is_active=1 LIMIT 1")
+      .get(principalId) as SupportThreadRow | undefined;
     return row ? supportThreadFromRow(row) : null;
   }
 
   getThreadForCall(callId: string): SupportThreadRecord | null {
-    const row = this.db.prepare("SELECT * FROM support_threads WHERE active_call_id=? ORDER BY is_active DESC,updated_at DESC LIMIT 1").get(callId) as SupportThreadRow | undefined;
+    const row = this.db
+      .prepare("SELECT * FROM support_threads WHERE active_call_id=? ORDER BY is_active DESC,updated_at DESC LIMIT 1")
+      .get(callId) as SupportThreadRow | undefined;
     return row ? supportThreadFromRow(row) : null;
   }
 
@@ -958,9 +1322,12 @@ export class LiaisonDatabase {
       const existing = this.getActiveSupportThread(input.principalId);
       if (existing) return existing;
       const now = input.now ?? new Date().toISOString();
-      this.db.prepare(`INSERT INTO support_threads
+      this.db
+        .prepare(
+          `INSERT INTO support_threads
         (id,principal_id,state,autonomy_mode,current_case_id,messaging_opt_state,draft_json,is_active,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,1,?,?)`)
+        VALUES (?,?,?,?,?,?,?,1,?,?)`,
+        )
         .run(
           input.id,
           input.principalId,
@@ -976,19 +1343,22 @@ export class LiaisonDatabase {
     })();
   }
 
-  updateSupportThread(id: string, fields: Partial<{
-    state: SupportThreadState;
-    autonomyMode: AutonomyMode;
-    currentCaseId: string | null;
-    approvedPlanVersion: number | null;
-    activeCallId: string | null;
-    pendingAttentionRequestId: string | null;
-    messagingOptState: MessagingOptState;
-    draft: unknown | null;
-    isActive: boolean;
-    updatedAt: string;
-  }>): SupportThreadRecord | null {
-    const mapping: Record<string,string> = {
+  updateSupportThread(
+    id: string,
+    fields: Partial<{
+      state: SupportThreadState;
+      autonomyMode: AutonomyMode;
+      currentCaseId: string | null;
+      approvedPlanVersion: number | null;
+      activeCallId: string | null;
+      pendingAttentionRequestId: string | null;
+      messagingOptState: MessagingOptState;
+      draft: unknown | null;
+      isActive: boolean;
+      updatedAt: string;
+    }>,
+  ): SupportThreadRecord | null {
+    const mapping: Record<string, string> = {
       state: "state",
       autonomyMode: "autonomy_mode",
       currentCaseId: "current_case_id",
@@ -1000,18 +1370,20 @@ export class LiaisonDatabase {
       isActive: "is_active",
       updatedAt: "updated_at",
     };
-    const supplied = Object.entries(fields).filter(([,value]) => value !== undefined && value !== null);
+    const supplied = Object.entries(fields).filter(([, value]) => value !== undefined && value !== null);
     const explicitNulls = ["currentCaseId", "approvedPlanVersion", "activeCallId", "pendingAttentionRequestId", "draft"]
       .filter((key) => Object.prototype.hasOwnProperty.call(fields, key) && fields[key as keyof typeof fields] === null)
       .map((key) => [key, null] as const);
     const entries: Array<readonly [string, unknown]> = [...supplied, ...explicitNulls];
-    if (!Object.prototype.hasOwnProperty.call(fields, "updatedAt")) entries.push(["updatedAt", new Date().toISOString()]);
-    const values = entries.map(([key,value]) => {
+    if (!Object.prototype.hasOwnProperty.call(fields, "updatedAt"))
+      entries.push(["updatedAt", new Date().toISOString()]);
+    const values = entries.map(([key, value]) => {
       if (key === "draft") return value === null ? null : JSON.stringify(value);
       if (typeof value === "boolean") return Number(value);
       return value;
     });
-    this.db.prepare(`UPDATE support_threads SET ${entries.map(([key]) => `${mapping[key]}=?`).join(",")} WHERE id=?`)
+    this.db
+      .prepare(`UPDATE support_threads SET ${entries.map(([key]) => `${mapping[key]}=?`).join(",")} WHERE id=?`)
       .run(...values, id);
     return this.getSupportThread(id);
   }
@@ -1023,9 +1395,12 @@ export class LiaisonDatabase {
     return this.db.transaction(() => {
       const now = input.now ?? new Date().toISOString();
       const reason = input.reason ?? "OWNER_OPTED_OUT";
-      const thread = this.db.prepare("UPDATE support_threads SET messaging_opt_state='OPTED_OUT',updated_at=? WHERE id=?")
+      const thread = this.db
+        .prepare("UPDATE support_threads SET messaging_opt_state='OPTED_OUT',updated_at=? WHERE id=?")
         .run(now, threadId);
-      this.db.prepare(`UPDATE messaging_work_items
+      this.db
+        .prepare(
+          `UPDATE messaging_work_items
         SET state='DEAD_LETTER',lease_owner=NULL,lease_expires_at=NULL,last_error=?,updated_at=?,completed_at=?
         WHERE outbound_message_id IN (
           SELECT id FROM outbound_messages
@@ -1033,15 +1408,19 @@ export class LiaisonDatabase {
             processing_state IN ('PENDING','PROCESSING')
             OR (delivery_state='QUEUED' AND provider_message_id IS NULL)
           )
-        ) AND state IN ('PENDING','PROCESSING')`)
+        ) AND state IN ('PENDING','PROCESSING')`,
+        )
         .run(reason, now, now, threadId);
-      const cancelled = this.db.prepare(`UPDATE outbound_messages
+      const cancelled = this.db
+        .prepare(
+          `UPDATE outbound_messages
         SET processing_state='DEAD_LETTER',delivery_state='FAILED',lease_owner=NULL,lease_expires_at=NULL,
             last_error=?,error_code=?,status_updated_at=?,processed_at=?
         WHERE thread_id=? AND provider_kind='TWILIO_SMS' AND (
           processing_state IN ('PENDING','PROCESSING')
           OR (delivery_state='QUEUED' AND provider_message_id IS NULL)
-        )`)
+        )`,
+        )
         .run(reason, reason, now, now, threadId);
       return { threadUpdated: thread.changes === 1, cancelledCount: cancelled.changes };
     })();
@@ -1059,28 +1438,53 @@ export class LiaisonDatabase {
     now?: string;
   }): CallAuthorizationRecord {
     return this.db.transaction(() => {
-      const plan = this.db.prepare(`SELECT
+      const plan = this.db
+        .prepare(
+          `SELECT
           json_extract(brief_json,'$.version') AS version,
           json_extract(brief_json,'$.phoneNumberE164') AS destination
-        FROM cases WHERE id=?`)
-        .get(input.caseId) as {version:number|null;destination:string|null} | undefined;
+        FROM cases WHERE id=?`,
+        )
+        .get(input.caseId) as { version: number | null; destination: string | null } | undefined;
       if (!plan || plan.version !== input.planVersion) throw new Error("PLAN_VERSION_MISMATCH");
       if (!plan.destination || (input.destinationE164 !== undefined && input.destinationE164 !== plan.destination)) {
         throw new Error("AUTHORIZATION_DESTINATION_MISMATCH");
       }
       const now = input.now ?? new Date().toISOString();
-      this.db.prepare("UPDATE call_authorizations SET revoked_at=?,revoke_reason='REPLACED' WHERE thread_id=? AND consumed_at IS NULL AND revoked_at IS NULL")
+      this.db
+        .prepare(
+          "UPDATE call_authorizations SET revoked_at=?,revoke_reason='REPLACED' WHERE thread_id=? AND consumed_at IS NULL AND revoked_at IS NULL",
+        )
         .run(now, input.threadId);
-      const approved = this.db.prepare("UPDATE cases SET approved_version=?,status='APPROVED',updated_at=? WHERE id=? AND json_extract(brief_json,'$.version')=?")
+      const approved = this.db
+        .prepare(
+          "UPDATE cases SET approved_version=?,status='APPROVED',updated_at=? WHERE id=? AND json_extract(brief_json,'$.version')=?",
+        )
         .run(input.planVersion, now, input.caseId, input.planVersion);
       if (approved.changes !== 1) throw new Error("PLAN_VERSION_MISMATCH");
-      const thread = this.db.prepare("UPDATE support_threads SET current_case_id=?,approved_plan_version=?,updated_at=? WHERE id=? AND is_active=1")
+      const thread = this.db
+        .prepare(
+          "UPDATE support_threads SET current_case_id=?,approved_plan_version=?,updated_at=? WHERE id=? AND is_active=1",
+        )
         .run(input.caseId, input.planVersion, now, input.threadId);
       if (thread.changes !== 1) throw new Error("ACTIVE_THREAD_NOT_FOUND");
-      this.db.prepare(`INSERT INTO call_authorizations
+      this.db
+        .prepare(
+          `INSERT INTO call_authorizations
         (id,thread_id,case_id,plan_version,destination_e164,telephony_mode,code_hash,created_at,expires_at)
-        VALUES (?,?,?,?,?,?,?,?,?)`)
-        .run(input.id, input.threadId, input.caseId, input.planVersion, plan.destination, input.telephonyMode ?? null, input.codeHash, now, input.expiresAt);
+        VALUES (?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          input.id,
+          input.threadId,
+          input.caseId,
+          input.planVersion,
+          plan.destination,
+          input.telephonyMode ?? null,
+          input.codeHash,
+          now,
+          input.expiresAt,
+        );
       const row = this.db.prepare("SELECT * FROM call_authorizations WHERE id=?").get(input.id) as CallAuthorizationRow;
       return callAuthorizationFromRow(row);
     })();
@@ -1097,10 +1501,13 @@ export class LiaisonDatabase {
   }): CallAuthorizationRecord | null {
     return this.db.transaction(() => {
       const now = input.now ?? new Date().toISOString();
-      const currentPlan = this.db.prepare("SELECT json_extract(brief_json,'$.phoneNumberE164') AS destination FROM cases WHERE id=?")
-        .get(input.caseId) as {destination:string|null} | undefined;
+      const currentPlan = this.db
+        .prepare("SELECT json_extract(brief_json,'$.phoneNumberE164') AS destination FROM cases WHERE id=?")
+        .get(input.caseId) as { destination: string | null } | undefined;
       const destination = input.destinationE164 ?? currentPlan?.destination ?? null;
-      const row = this.db.prepare(`SELECT a.* FROM call_authorizations a
+      const row = this.db
+        .prepare(
+          `SELECT a.* FROM call_authorizations a
         JOIN support_threads t ON t.id=a.thread_id
         JOIN cases c ON c.id=a.case_id
         WHERE a.thread_id=? AND a.case_id=? AND a.plan_version=? AND a.code_hash=?
@@ -1109,10 +1516,22 @@ export class LiaisonDatabase {
           AND a.consumed_at IS NULL AND a.revoked_at IS NULL AND a.expires_at>?
           AND t.is_active=1 AND t.current_case_id=a.case_id AND t.approved_plan_version=a.plan_version
           AND c.approved_version=a.plan_version AND json_extract(c.brief_json,'$.version')=a.plan_version
-        ORDER BY a.created_at DESC LIMIT 1`)
-        .get(input.threadId, input.caseId, input.planVersion, input.codeHash, destination, input.telephonyMode ?? null, now) as CallAuthorizationRow | undefined;
+        ORDER BY a.created_at DESC LIMIT 1`,
+        )
+        .get(
+          input.threadId,
+          input.caseId,
+          input.planVersion,
+          input.codeHash,
+          destination,
+          input.telephonyMode ?? null,
+          now,
+        ) as CallAuthorizationRow | undefined;
       if (!row) return null;
-      const result = this.db.prepare("UPDATE call_authorizations SET consumed_at=? WHERE id=? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>?")
+      const result = this.db
+        .prepare(
+          "UPDATE call_authorizations SET consumed_at=? WHERE id=? AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>?",
+        )
         .run(now, row.id, now);
       if (result.changes !== 1) return null;
       return callAuthorizationFromRow({ ...row, consumed_at: now });
@@ -1123,9 +1542,17 @@ export class LiaisonDatabase {
     if (!input.threadId && !input.caseId) throw new Error("AUTHORIZATION_SCOPE_REQUIRED");
     const clauses: string[] = ["consumed_at IS NULL", "revoked_at IS NULL"];
     const values: unknown[] = [input.now ?? new Date().toISOString(), input.reason];
-    if (input.threadId) { clauses.push("thread_id=?"); values.push(input.threadId); }
-    if (input.caseId) { clauses.push("case_id=?"); values.push(input.caseId); }
-    return this.db.prepare(`UPDATE call_authorizations SET revoked_at=?,revoke_reason=? WHERE ${clauses.join(" AND ")}`).run(...values).changes;
+    if (input.threadId) {
+      clauses.push("thread_id=?");
+      values.push(input.threadId);
+    }
+    if (input.caseId) {
+      clauses.push("case_id=?");
+      values.push(input.caseId);
+    }
+    return this.db
+      .prepare(`UPDATE call_authorizations SET revoked_at=?,revoke_reason=? WHERE ${clauses.join(" AND ")}`)
+      .run(...values).changes;
   }
 
   recordProviderSecurityEvent(input: {
@@ -1141,9 +1568,12 @@ export class LiaisonDatabase {
     createdAt?: string;
   }): { created: boolean; event: ProviderSecurityEventRecord } {
     return this.db.transaction(() => {
-      const result = this.db.prepare(`INSERT OR IGNORE INTO provider_security_events
+      const result = this.db
+        .prepare(
+          `INSERT OR IGNORE INTO provider_security_events
         (id,provider_kind,provider_message_id,event_type,reason_code,thread_id,case_id,call_id,redacted_metadata_json,created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?)`)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        )
         .run(
           input.id,
           input.providerKind,
@@ -1156,7 +1586,8 @@ export class LiaisonDatabase {
           JSON.stringify(input.redactedMetadata ?? {}),
           input.createdAt ?? new Date().toISOString(),
         );
-      const row = this.db.prepare("SELECT * FROM provider_security_events WHERE provider_kind=? AND provider_message_id=?")
+      const row = this.db
+        .prepare("SELECT * FROM provider_security_events WHERE provider_kind=? AND provider_message_id=?")
         .get(input.providerKind, input.providerMessageId) as ProviderSecurityEventRow | undefined;
       if (!row) throw new Error("PROVIDER_SECURITY_EVENT_IDEMPOTENCY_CONFLICT");
       return { created: result.changes === 1, event: providerSecurityEventFromRow(row) };
@@ -1165,8 +1596,11 @@ export class LiaisonDatabase {
 
   listProviderSecurityEvents(limit = 100): ProviderSecurityEventRecord[] {
     const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
-    return (this.db.prepare("SELECT * FROM provider_security_events ORDER BY created_at DESC,id DESC LIMIT ?").all(safeLimit) as ProviderSecurityEventRow[])
-      .map(providerSecurityEventFromRow);
+    return (
+      this.db
+        .prepare("SELECT * FROM provider_security_events ORDER BY created_at DESC,id DESC LIMIT ?")
+        .all(safeLimit) as ProviderSecurityEventRow[]
+    ).map(providerSecurityEventFromRow);
   }
 
   getInboundMessage(id: string): InboundMessageRecord | null {
@@ -1180,9 +1614,12 @@ export class LiaisonDatabase {
   ): { created: boolean; message: InboundMessageRecord; workItem: MessagingWorkItemRecord } {
     return this.db.transaction(() => {
       const now = input.createdAt ?? new Date().toISOString();
-      const inserted = this.db.prepare(`INSERT OR IGNORE INTO inbound_messages
+      const inserted = this.db
+        .prepare(
+          `INSERT OR IGNORE INTO inbound_messages
         (id,thread_id,provider_kind,provider_message_id,direction,redacted_body,sender,recipient,case_id,call_id,attention_request_id,created_at,processing_state,delivery_state,status_updated_at,segment_estimate,error_code,idempotency_key)
-        VALUES (?,?,?,?,'INBOUND',?,?,?,?,?,?,?,'PENDING','RECEIVED',?,?,?,?)`)
+        VALUES (?,?,?,?,'INBOUND',?,?,?,?,?,?,?,'PENDING','RECEIVED',?,?,?,?)`,
+        )
         .run(
           input.id,
           input.threadId,
@@ -1200,16 +1637,24 @@ export class LiaisonDatabase {
           input.errorCode ?? null,
           input.idempotencyKey,
         );
-      const row = (inserted.changes === 1
-        ? this.db.prepare("SELECT * FROM inbound_messages WHERE id=?").get(input.id)
-        : this.db.prepare(`SELECT * FROM inbound_messages
+      const row = (
+        inserted.changes === 1
+          ? this.db.prepare("SELECT * FROM inbound_messages WHERE id=?").get(input.id)
+          : this.db
+              .prepare(
+                `SELECT * FROM inbound_messages
             WHERE provider_kind=? AND (idempotency_key=? OR (provider_message_id IS NOT NULL AND provider_message_id=?))
-            ORDER BY created_at LIMIT 1`)
-          .get(input.providerKind, input.idempotencyKey, input.providerMessageId ?? null)) as InboundMessageRow | undefined;
+            ORDER BY created_at LIMIT 1`,
+              )
+              .get(input.providerKind, input.idempotencyKey, input.providerMessageId ?? null)
+      ) as InboundMessageRow | undefined;
       if (!row) throw new Error("INBOUND_IDEMPOTENCY_CONFLICT");
-      this.db.prepare(`INSERT OR IGNORE INTO messaging_work_items
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO messaging_work_items
         (id,kind,inbound_message_id,payload_json,state,next_eligible_at,idempotency_key,created_at,updated_at)
-        VALUES (?,?,?,?,'PENDING',?,?,?,?)`)
+        VALUES (?,?,?,?,'PENDING',?,?,?,?)`,
+        )
         .run(
           work.id,
           work.kind,
@@ -1220,24 +1665,40 @@ export class LiaisonDatabase {
           now,
           now,
         );
-      const workRow = this.db.prepare("SELECT * FROM messaging_work_items WHERE inbound_message_id=? AND kind=?")
+      const workRow = this.db
+        .prepare("SELECT * FROM messaging_work_items WHERE inbound_message_id=? AND kind=?")
         .get(row.id, work.kind) as WorkItemRow | undefined;
       if (!workRow) throw new Error("WORK_IDEMPOTENCY_CONFLICT");
-      return { created: inserted.changes === 1, message: inboundMessageFromRow(row), workItem: workItemFromRow(workRow) };
+      return {
+        created: inserted.changes === 1,
+        message: inboundMessageFromRow(row),
+        workItem: workItemFromRow(workRow),
+      };
     })();
   }
 
-  claimMessagingWork(input: { workerId: string; now: string; leaseSeconds: number; limit?: number }): MessagingWorkItemRecord[] {
+  claimMessagingWork(input: {
+    workerId: string;
+    now: string;
+    leaseSeconds: number;
+    limit?: number;
+  }): MessagingWorkItemRecord[] {
     return this.db.transaction(() => {
       const limit = Math.max(1, Math.min(100, Math.trunc(input.limit ?? 10)));
       const expiresAt = leaseExpiry(input.now, input.leaseSeconds);
-      this.db.prepare(`UPDATE messaging_work_items
+      this.db
+        .prepare(
+          `UPDATE messaging_work_items
         SET state='PENDING',lease_owner=NULL,lease_expires_at=NULL,updated_at=?
-        WHERE state='PROCESSING' AND lease_expires_at<=?`)
+        WHERE state='PROCESSING' AND lease_expires_at<=?`,
+        )
         .run(input.now, input.now);
-      const rows = this.db.prepare(`SELECT * FROM messaging_work_items
+      const rows = this.db
+        .prepare(
+          `SELECT * FROM messaging_work_items
         WHERE state='PENDING' AND next_eligible_at<=?
-        ORDER BY next_eligible_at,created_at,id LIMIT ?`)
+        ORDER BY next_eligible_at,created_at,id LIMIT ?`,
+        )
         .all(input.now, limit) as WorkItemRow[];
       const claim = this.db.prepare(`UPDATE messaging_work_items
         SET state='PROCESSING',lease_owner=?,lease_expires_at=?,attempt_count=attempt_count+1,updated_at=?
@@ -1245,7 +1706,10 @@ export class LiaisonDatabase {
       const claimed: MessagingWorkItemRecord[] = [];
       for (const row of rows) {
         if (claim.run(input.workerId, expiresAt, input.now, row.id).changes !== 1) continue;
-        this.db.prepare("UPDATE inbound_messages SET processing_state='PROCESSING',status_updated_at=? WHERE id=? AND processing_state IN ('PENDING','RECEIVED','PROCESSING')")
+        this.db
+          .prepare(
+            "UPDATE inbound_messages SET processing_state='PROCESSING',status_updated_at=? WHERE id=? AND processing_state IN ('PENDING','RECEIVED','PROCESSING')",
+          )
           .run(input.now, row.inbound_message_id);
         const updated = this.db.prepare("SELECT * FROM messaging_work_items WHERE id=?").get(row.id) as WorkItemRow;
         claimed.push(workItemFromRow(updated));
@@ -1256,34 +1720,56 @@ export class LiaisonDatabase {
 
   completeMessagingWork(id: string, workerId: string, now = new Date().toISOString()): boolean {
     return this.db.transaction(() => {
-      const row = this.db.prepare("SELECT inbound_message_id FROM messaging_work_items WHERE id=? AND state='PROCESSING' AND lease_owner=?")
-        .get(id, workerId) as {inbound_message_id:string|null} | undefined;
+      const row = this.db
+        .prepare(
+          "SELECT inbound_message_id FROM messaging_work_items WHERE id=? AND state='PROCESSING' AND lease_owner=?",
+        )
+        .get(id, workerId) as { inbound_message_id: string | null } | undefined;
       if (!row) return false;
-      const result = this.db.prepare(`UPDATE messaging_work_items
+      const result = this.db
+        .prepare(
+          `UPDATE messaging_work_items
         SET state='COMPLETED',lease_owner=NULL,lease_expires_at=NULL,updated_at=?,completed_at=?
-        WHERE id=? AND state='PROCESSING' AND lease_owner=?`)
+        WHERE id=? AND state='PROCESSING' AND lease_owner=?`,
+        )
         .run(now, now, id, workerId);
       if (result.changes !== 1) return false;
       if (row.inbound_message_id) {
-        this.db.prepare("UPDATE inbound_messages SET processing_state='COMPLETED',status_updated_at=?,processed_at=? WHERE id=?")
+        this.db
+          .prepare(
+            "UPDATE inbound_messages SET processing_state='COMPLETED',status_updated_at=?,processed_at=? WHERE id=?",
+          )
           .run(now, now, row.inbound_message_id);
       }
       return true;
     })();
   }
 
-  retryMessagingWork(id: string, workerId: string, error: string, nextEligibleAt: string, now = new Date().toISOString()): boolean {
+  retryMessagingWork(
+    id: string,
+    workerId: string,
+    error: string,
+    nextEligibleAt: string,
+    now = new Date().toISOString(),
+  ): boolean {
     return this.db.transaction(() => {
-      const row = this.db.prepare("SELECT inbound_message_id FROM messaging_work_items WHERE id=? AND state='PROCESSING' AND lease_owner=?")
-        .get(id, workerId) as {inbound_message_id:string|null} | undefined;
+      const row = this.db
+        .prepare(
+          "SELECT inbound_message_id FROM messaging_work_items WHERE id=? AND state='PROCESSING' AND lease_owner=?",
+        )
+        .get(id, workerId) as { inbound_message_id: string | null } | undefined;
       if (!row) return false;
-      const result = this.db.prepare(`UPDATE messaging_work_items
+      const result = this.db
+        .prepare(
+          `UPDATE messaging_work_items
         SET state='PENDING',lease_owner=NULL,lease_expires_at=NULL,last_error=?,next_eligible_at=?,updated_at=?
-        WHERE id=? AND state='PROCESSING' AND lease_owner=?`)
+        WHERE id=? AND state='PROCESSING' AND lease_owner=?`,
+        )
         .run(error, nextEligibleAt, now, id, workerId);
       if (result.changes !== 1) return false;
       if (row.inbound_message_id) {
-        this.db.prepare("UPDATE inbound_messages SET processing_state='PENDING',status_updated_at=?,error_code=? WHERE id=?")
+        this.db
+          .prepare("UPDATE inbound_messages SET processing_state='PENDING',status_updated_at=?,error_code=? WHERE id=?")
           .run(now, error, row.inbound_message_id);
       }
       return true;
@@ -1292,16 +1778,25 @@ export class LiaisonDatabase {
 
   deadLetterMessagingWork(id: string, workerId: string, error: string, now = new Date().toISOString()): boolean {
     return this.db.transaction(() => {
-      const row = this.db.prepare("SELECT inbound_message_id FROM messaging_work_items WHERE id=? AND state='PROCESSING' AND lease_owner=?")
-        .get(id, workerId) as {inbound_message_id:string|null} | undefined;
+      const row = this.db
+        .prepare(
+          "SELECT inbound_message_id FROM messaging_work_items WHERE id=? AND state='PROCESSING' AND lease_owner=?",
+        )
+        .get(id, workerId) as { inbound_message_id: string | null } | undefined;
       if (!row) return false;
-      const result = this.db.prepare(`UPDATE messaging_work_items
+      const result = this.db
+        .prepare(
+          `UPDATE messaging_work_items
         SET state='DEAD_LETTER',lease_owner=NULL,lease_expires_at=NULL,last_error=?,updated_at=?,completed_at=?
-        WHERE id=? AND state='PROCESSING' AND lease_owner=?`)
+        WHERE id=? AND state='PROCESSING' AND lease_owner=?`,
+        )
         .run(error, now, now, id, workerId);
       if (result.changes !== 1) return false;
       if (row.inbound_message_id) {
-        this.db.prepare("UPDATE inbound_messages SET processing_state='DEAD_LETTER',status_updated_at=?,processed_at=?,error_code=? WHERE id=?")
+        this.db
+          .prepare(
+            "UPDATE inbound_messages SET processing_state='DEAD_LETTER',status_updated_at=?,processed_at=?,error_code=? WHERE id=?",
+          )
           .run(now, now, error, row.inbound_message_id);
       }
       return true;
@@ -1310,14 +1805,22 @@ export class LiaisonDatabase {
 
   resetExpiredMessagingLeases(now = new Date().toISOString()): number {
     return this.db.transaction(() => {
-      const inboundIds = this.db.prepare(`SELECT inbound_message_id FROM messaging_work_items
-        WHERE state='PROCESSING' AND lease_expires_at<=? AND inbound_message_id IS NOT NULL`)
-        .all(now) as Array<{inbound_message_id:string}>;
-      const result = this.db.prepare(`UPDATE messaging_work_items
+      const inboundIds = this.db
+        .prepare(
+          `SELECT inbound_message_id FROM messaging_work_items
+        WHERE state='PROCESSING' AND lease_expires_at<=? AND inbound_message_id IS NOT NULL`,
+        )
+        .all(now) as Array<{ inbound_message_id: string }>;
+      const result = this.db
+        .prepare(
+          `UPDATE messaging_work_items
         SET state='PENDING',lease_owner=NULL,lease_expires_at=NULL,updated_at=?
-        WHERE state='PROCESSING' AND lease_expires_at<=?`)
+        WHERE state='PROCESSING' AND lease_expires_at<=?`,
+        )
         .run(now, now);
-      const updateInbound = this.db.prepare("UPDATE inbound_messages SET processing_state='PENDING',status_updated_at=? WHERE id=? AND processing_state='PROCESSING'");
+      const updateInbound = this.db.prepare(
+        "UPDATE inbound_messages SET processing_state='PENDING',status_updated_at=? WHERE id=? AND processing_state='PROCESSING'",
+      );
       for (const row of inboundIds) updateInbound.run(now, row.inbound_message_id);
       return result.changes;
     })();
@@ -1329,16 +1832,21 @@ export class LiaisonDatabase {
   }
 
   findOutboundMessageByProviderId(providerMessageId: string): OutboundMessageRecord | null {
-    const row = this.db.prepare("SELECT * FROM outbound_messages WHERE provider_message_id=? ORDER BY created_at DESC LIMIT 1").get(providerMessageId) as OutboundMessageRow | undefined;
+    const row = this.db
+      .prepare("SELECT * FROM outbound_messages WHERE provider_message_id=? ORDER BY created_at DESC LIMIT 1")
+      .get(providerMessageId) as OutboundMessageRow | undefined;
     return row ? outboundMessageFromRow(row) : null;
   }
 
   enqueueOutboundMessage(input: OutboundMessageInput): { created: boolean; message: OutboundMessageRecord } {
     return this.db.transaction(() => {
       const now = input.createdAt ?? new Date().toISOString();
-      const inserted = this.db.prepare(`INSERT OR IGNORE INTO outbound_messages
+      const inserted = this.db
+        .prepare(
+          `INSERT OR IGNORE INTO outbound_messages
         (id,thread_id,provider_kind,provider_message_id,direction,redacted_body,sender,recipient,case_id,call_id,attention_request_id,created_at,processing_state,delivery_state,status_updated_at,segment_estimate,error_code,idempotency_key,next_eligible_at)
-        VALUES (?,?,?,?,'OUTBOUND',?,?,?,?,?,?,?,'PENDING','PENDING',?,?,?,?,?)`)
+        VALUES (?,?,?,?,'OUTBOUND',?,?,?,?,?,?,?,'PENDING','PENDING',?,?,?,?,?)`,
+        )
         .run(
           input.id,
           input.threadId,
@@ -1357,23 +1865,36 @@ export class LiaisonDatabase {
           input.idempotencyKey,
           input.nextEligibleAt ?? now,
         );
-      const row = this.db.prepare("SELECT * FROM outbound_messages WHERE idempotency_key=?").get(input.idempotencyKey) as OutboundMessageRow | undefined;
+      const row = this.db
+        .prepare("SELECT * FROM outbound_messages WHERE idempotency_key=?")
+        .get(input.idempotencyKey) as OutboundMessageRow | undefined;
       if (!row) throw new Error("OUTBOUND_IDEMPOTENCY_CONFLICT");
       return { created: inserted.changes === 1, message: outboundMessageFromRow(row) };
     })();
   }
 
-  claimOutboundMessages(input: { workerId: string; now: string; leaseSeconds: number; limit?: number }): OutboundMessageRecord[] {
+  claimOutboundMessages(input: {
+    workerId: string;
+    now: string;
+    leaseSeconds: number;
+    limit?: number;
+  }): OutboundMessageRecord[] {
     return this.db.transaction(() => {
       const limit = Math.max(1, Math.min(100, Math.trunc(input.limit ?? 10)));
       const expiresAt = leaseExpiry(input.now, input.leaseSeconds);
-      this.db.prepare(`UPDATE outbound_messages
+      this.db
+        .prepare(
+          `UPDATE outbound_messages
         SET processing_state='DEAD_LETTER',delivery_state='UNKNOWN',lease_owner=NULL,lease_expires_at=NULL,status_updated_at=?,processed_at=?,error_code='AMBIGUOUS_PROVIDER_ACCEPTANCE',last_error='Send lease expired after dispatch may have reached the provider; automatic retry is disabled.'
-        WHERE processing_state='PROCESSING' AND lease_expires_at<=?`)
+        WHERE processing_state='PROCESSING' AND lease_expires_at<=?`,
+        )
         .run(input.now, input.now, input.now);
-      const rows = this.db.prepare(`SELECT * FROM outbound_messages
+      const rows = this.db
+        .prepare(
+          `SELECT * FROM outbound_messages
         WHERE processing_state='PENDING' AND next_eligible_at<=?
-        ORDER BY next_eligible_at,created_at,id LIMIT ?`)
+        ORDER BY next_eligible_at,created_at,id LIMIT ?`,
+        )
         .all(input.now, limit) as OutboundMessageRow[];
       const claim = this.db.prepare(`UPDATE outbound_messages
         SET processing_state='PROCESSING',lease_owner=?,lease_expires_at=?,attempt_count=attempt_count+1,status_updated_at=?
@@ -1398,41 +1919,76 @@ export class LiaisonDatabase {
     const now = input.now ?? new Date().toISOString();
     const state = input.deliveryState ?? "QUEUED";
     if (state === "RECEIVED" || state === "PENDING") throw new Error("INVALID_SENT_DELIVERY_STATE");
-    return this.db.prepare(`UPDATE outbound_messages
+    return (
+      this.db
+        .prepare(
+          `UPDATE outbound_messages
       SET processing_state='COMPLETED',provider_message_id=COALESCE(?,provider_message_id),delivery_state=?,status_updated_at=?,processed_at=?,delivered_at=CASE WHEN ?='DELIVERED' THEN ? ELSE delivered_at END,lease_owner=NULL,lease_expires_at=NULL,last_error=NULL,error_code=NULL
-      WHERE id=? AND processing_state='PROCESSING' AND lease_owner=?`)
-      .run(input.providerMessageId ?? null, state, now, now, state, now, input.id, input.workerId).changes === 1;
+      WHERE id=? AND processing_state='PROCESSING' AND lease_owner=?`,
+        )
+        .run(input.providerMessageId ?? null, state, now, now, state, now, input.id, input.workerId).changes === 1
+    );
   }
 
-  retryOutboundMessage(id: string, workerId: string, error: string, nextEligibleAt: string, now = new Date().toISOString()): boolean {
-    return this.db.prepare(`UPDATE outbound_messages
+  retryOutboundMessage(
+    id: string,
+    workerId: string,
+    error: string,
+    nextEligibleAt: string,
+    now = new Date().toISOString(),
+  ): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE outbound_messages
       SET processing_state='PENDING',lease_owner=NULL,lease_expires_at=NULL,last_error=?,error_code=?,next_eligible_at=?,status_updated_at=?
-      WHERE id=? AND processing_state='PROCESSING' AND lease_owner=?`)
-      .run(error, error, nextEligibleAt, now, id, workerId).changes === 1;
+      WHERE id=? AND processing_state='PROCESSING' AND lease_owner=?`,
+        )
+        .run(error, error, nextEligibleAt, now, id, workerId).changes === 1
+    );
   }
 
   deadLetterOutboundMessage(id: string, workerId: string, error: string, now = new Date().toISOString()): boolean {
-    return this.db.prepare(`UPDATE outbound_messages
+    return (
+      this.db
+        .prepare(
+          `UPDATE outbound_messages
       SET processing_state='DEAD_LETTER',delivery_state='FAILED',lease_owner=NULL,lease_expires_at=NULL,last_error=?,error_code=?,status_updated_at=?,processed_at=?
-      WHERE id=? AND processing_state='PROCESSING' AND lease_owner=?`)
-      .run(error, error, now, now, id, workerId).changes === 1;
+      WHERE id=? AND processing_state='PROCESSING' AND lease_owner=?`,
+        )
+        .run(error, error, now, now, id, workerId).changes === 1
+    );
   }
 
-  markOutboundAmbiguous(id:string,workerId:string,error:string,now=new Date().toISOString()):boolean{
-    return this.db.prepare(`UPDATE outbound_messages SET processing_state='DEAD_LETTER',delivery_state='UNKNOWN',lease_owner=NULL,lease_expires_at=NULL,last_error=?,error_code='AMBIGUOUS_PROVIDER_ACCEPTANCE',status_updated_at=?,processed_at=? WHERE id=? AND processing_state='PROCESSING' AND lease_owner=?`).run(error,now,now,id,workerId).changes===1;
+  markOutboundAmbiguous(id: string, workerId: string, error: string, now = new Date().toISOString()): boolean {
+    return (
+      this.db
+        .prepare(
+          `UPDATE outbound_messages SET processing_state='DEAD_LETTER',delivery_state='UNKNOWN',lease_owner=NULL,lease_expires_at=NULL,last_error=?,error_code='AMBIGUOUS_PROVIDER_ACCEPTANCE',status_updated_at=?,processed_at=? WHERE id=? AND processing_state='PROCESSING' AND lease_owner=?`,
+        )
+        .run(error, now, now, id, workerId).changes === 1
+    );
   }
 
   resetExpiredOutboundLeases(now = new Date().toISOString()): number {
-    return this.db.prepare(`UPDATE outbound_messages
+    return this.db
+      .prepare(
+        `UPDATE outbound_messages
       SET processing_state='DEAD_LETTER',delivery_state='UNKNOWN',lease_owner=NULL,lease_expires_at=NULL,status_updated_at=?,processed_at=?,error_code='AMBIGUOUS_PROVIDER_ACCEPTANCE',last_error='Send lease expired after dispatch may have reached the provider; automatic retry is disabled.'
-      WHERE processing_state='PROCESSING' AND lease_expires_at<=?`)
+      WHERE processing_state='PROCESSING' AND lease_expires_at<=?`,
+      )
       .run(now, now, now).changes;
   }
 
   listMessageDeliveryEvents(outboundMessageId: string): MessageDeliveryEventRecord[] {
-    return (this.db.prepare(`SELECT * FROM message_delivery_events
-      WHERE outbound_message_id=? ORDER BY occurred_at,received_at,id`).all(outboundMessageId) as DeliveryEventRow[])
-      .map(deliveryEventFromRow);
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM message_delivery_events
+      WHERE outbound_message_id=? ORDER BY occurred_at,received_at,id`,
+        )
+        .all(outboundMessageId) as DeliveryEventRow[]
+    ).map(deliveryEventFromRow);
   }
 
   appendMessageDeliveryEvent(
@@ -1450,9 +2006,12 @@ export class LiaisonDatabase {
   ): { created: boolean; message: OutboundMessageRecord } {
     return this.db.transaction(() => {
       const receivedAt = input.receivedAt ?? new Date().toISOString();
-      const inserted = this.db.prepare(`INSERT OR IGNORE INTO message_delivery_events
+      const inserted = this.db
+        .prepare(
+          `INSERT OR IGNORE INTO message_delivery_events
         (id,outbound_message_id,provider_message_id,provider_status,error_code,occurred_at,received_at,event_key)
-        VALUES (?,?,?,?,?,?,?,?)`)
+        VALUES (?,?,?,?,?,?,?,?)`,
+        )
         .run(
           input.id,
           input.outboundMessageId,
@@ -1468,13 +2027,26 @@ export class LiaisonDatabase {
       const events = this.listMessageDeliveryEvents(input.outboundMessageId);
       const reduced = reducer(events, current);
       if (reduced.deliveryState === "RECEIVED") throw new Error("INVALID_OUTBOUND_DELIVERY_STATE");
-      const deliveredAt = reduced.deliveryState === "DELIVERED"
-        ? (reduced.deliveredAt ?? events.filter((event) => event.providerStatus.toLowerCase() === "delivered").at(-1)?.occurredAt ?? receivedAt)
-        : null;
-      this.db.prepare(`UPDATE outbound_messages SET
+      const deliveredAt =
+        reduced.deliveryState === "DELIVERED"
+          ? (reduced.deliveredAt ??
+            events.filter((event) => event.providerStatus.toLowerCase() === "delivered").at(-1)?.occurredAt ??
+            receivedAt)
+          : null;
+      this.db
+        .prepare(
+          `UPDATE outbound_messages SET
           provider_message_id=COALESCE(provider_message_id,?),delivery_state=?,error_code=?,delivered_at=?,status_updated_at=?
-        WHERE id=?`)
-        .run(input.providerMessageId ?? null, reduced.deliveryState, reduced.errorCode ?? null, deliveredAt, receivedAt, input.outboundMessageId);
+        WHERE id=?`,
+        )
+        .run(
+          input.providerMessageId ?? null,
+          reduced.deliveryState,
+          reduced.errorCode ?? null,
+          deliveredAt,
+          receivedAt,
+          input.outboundMessageId,
+        );
       const updated = this.getOutboundMessage(input.outboundMessageId);
       if (!updated) throw new Error("OUTBOUND_MESSAGE_NOT_FOUND");
       return { created: inserted.changes === 1, message: updated };
@@ -1484,25 +2056,48 @@ export class LiaisonDatabase {
   listMessages(threadId: string, options: { limit?: number; before?: string } = {}): ThreadMessageRecord[] {
     const limit = Math.max(1, Math.min(500, Math.trunc(options.limit ?? 100)));
     const before = options.before ?? "9999-12-31T23:59:59.999Z";
-    const inbound = (this.db.prepare(`SELECT * FROM inbound_messages
-      WHERE thread_id=? AND created_at<? ORDER BY created_at DESC,id DESC LIMIT ?`)
-      .all(threadId, before, limit) as InboundMessageRow[]).map(inboundMessageFromRow);
-    const outbound = (this.db.prepare(`SELECT * FROM outbound_messages
-      WHERE thread_id=? AND created_at<? ORDER BY created_at DESC,id DESC LIMIT ?`)
-      .all(threadId, before, limit) as OutboundMessageRow[]).map(outboundMessageFromRow);
+    const inbound = (
+      this.db
+        .prepare(
+          `SELECT * FROM inbound_messages
+      WHERE thread_id=? AND created_at<? ORDER BY created_at DESC,id DESC LIMIT ?`,
+        )
+        .all(threadId, before, limit) as InboundMessageRow[]
+    ).map(inboundMessageFromRow);
+    const outbound = (
+      this.db
+        .prepare(
+          `SELECT * FROM outbound_messages
+      WHERE thread_id=? AND created_at<? ORDER BY created_at DESC,id DESC LIMIT ?`,
+        )
+        .all(threadId, before, limit) as OutboundMessageRow[]
+    ).map(outboundMessageFromRow);
     return [...inbound, ...outbound]
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || (left.direction === right.direction ? left.id.localeCompare(right.id) : left.direction === "INBOUND" ? -1 : 1))
+      .sort(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) ||
+          (left.direction === right.direction
+            ? left.id.localeCompare(right.id)
+            : left.direction === "INBOUND"
+              ? -1
+              : 1),
+      )
       .slice(-limit);
   }
 
   getAttentionRequest(id: string): AttentionRequestRecord | null {
-    const row = this.db.prepare("SELECT * FROM attention_requests WHERE id=?").get(id) as AttentionRequestRow | undefined;
+    const row = this.db.prepare("SELECT * FROM attention_requests WHERE id=?").get(id) as
+      | AttentionRequestRow
+      | undefined;
     return row ? attentionRequestFromRow(row) : null;
   }
 
   getPendingAttentionRequest(callId: string): AttentionRequestRecord | null {
-    const row = this.db.prepare(`SELECT * FROM attention_requests
-      WHERE call_id=? AND status='PENDING' ORDER BY blocking DESC,created_at DESC LIMIT 1`)
+    const row = this.db
+      .prepare(
+        `SELECT * FROM attention_requests
+      WHERE call_id=? AND status='PENDING' ORDER BY blocking DESC,created_at DESC LIMIT 1`,
+      )
       .get(callId) as AttentionRequestRow | undefined;
     return row ? attentionRequestFromRow(row) : null;
   }
@@ -1525,20 +2120,37 @@ export class LiaisonDatabase {
       const blocking = input.blocking ?? true;
       let supersededId: string | null = null;
       if (blocking) {
-        const prior = (input.callId
-          ? this.db.prepare("SELECT id FROM attention_requests WHERE call_id=? AND blocking=1 AND status='PENDING' LIMIT 1").get(input.callId)
-          : this.db.prepare("SELECT id FROM attention_requests WHERE thread_id=? AND call_id IS NULL AND blocking=1 AND status='PENDING' LIMIT 1").get(input.threadId)) as {id:string} | undefined;
+        const prior = (
+          input.callId
+            ? this.db
+                .prepare(
+                  "SELECT id FROM attention_requests WHERE call_id=? AND blocking=1 AND status='PENDING' LIMIT 1",
+                )
+                .get(input.callId)
+            : this.db
+                .prepare(
+                  "SELECT id FROM attention_requests WHERE thread_id=? AND call_id IS NULL AND blocking=1 AND status='PENDING' LIMIT 1",
+                )
+                .get(input.threadId)
+        ) as { id: string } | undefined;
         if (prior) {
           supersededId = prior.id;
-          this.db.prepare("UPDATE attention_requests SET status='SUPERSEDED',resolved_at=? WHERE id=? AND status='PENDING'")
+          this.db
+            .prepare("UPDATE attention_requests SET status='SUPERSEDED',resolved_at=? WHERE id=? AND status='PENDING'")
             .run(now, prior.id);
-          this.db.prepare("UPDATE secure_action_tokens SET revoked_at=?,revoke_reason='ATTENTION_SUPERSEDED' WHERE attention_request_id=? AND revoked_at IS NULL")
+          this.db
+            .prepare(
+              "UPDATE secure_action_tokens SET revoked_at=?,revoke_reason='ATTENTION_SUPERSEDED' WHERE attention_request_id=? AND revoked_at IS NULL",
+            )
             .run(now, prior.id);
         }
       }
-      this.db.prepare(`INSERT INTO attention_requests
+      this.db
+        .prepare(
+          `INSERT INTO attention_requests
         (id,thread_id,case_id,call_id,tier,status,blocking,question,choices_json,proposed_action_json,created_at,expires_at)
-        VALUES (?,?,?,?,?,'PENDING',?,?,?,?,?,?)`)
+        VALUES (?,?,?,?,?,'PENDING',?,?,?,?,?,?)`,
+        )
         .run(
           input.id,
           input.threadId,
@@ -1548,7 +2160,9 @@ export class LiaisonDatabase {
           Number(blocking),
           input.question,
           JSON.stringify(input.choices ?? []),
-          input.proposedAction === undefined || input.proposedAction === null ? null : JSON.stringify(input.proposedAction),
+          input.proposedAction === undefined || input.proposedAction === null
+            ? null
+            : JSON.stringify(input.proposedAction),
           now,
           input.expiresAt,
         );
@@ -1556,7 +2170,10 @@ export class LiaisonDatabase {
         this.db.prepare("UPDATE attention_requests SET superseded_by=? WHERE id=?").run(input.id, supersededId);
       }
       if (blocking) {
-        this.db.prepare("UPDATE support_threads SET pending_attention_request_id=?,state='AWAITING_USER_DECISION',updated_at=? WHERE id=?")
+        this.db
+          .prepare(
+            "UPDATE support_threads SET pending_attention_request_id=?,state='AWAITING_USER_DECISION',updated_at=? WHERE id=?",
+          )
           .run(input.id, now, input.threadId);
       }
       const request = this.getAttentionRequest(input.id);
@@ -1574,40 +2191,141 @@ export class LiaisonDatabase {
   }): AttentionRequestRecord | null {
     return this.db.transaction(() => {
       const now = input.now ?? new Date().toISOString();
-      const row = this.db.prepare("SELECT * FROM attention_requests WHERE id=?").get(input.id) as AttentionRequestRow | undefined;
+      const row = this.db.prepare("SELECT * FROM attention_requests WHERE id=?").get(input.id) as
+        | AttentionRequestRow
+        | undefined;
       if (!row || row.status !== "PENDING") return null;
       if (input.expectedCallId !== undefined && row.call_id !== input.expectedCallId) return null;
       if (row.expires_at <= now) {
-        this.db.prepare("UPDATE attention_requests SET status='EXPIRED',resolved_at=? WHERE id=? AND status='PENDING'").run(now, row.id);
-        this.db.prepare("UPDATE support_threads SET pending_attention_request_id=NULL,updated_at=? WHERE id=? AND pending_attention_request_id=?")
+        this.db
+          .prepare("UPDATE attention_requests SET status='EXPIRED',resolved_at=? WHERE id=? AND status='PENDING'")
+          .run(now, row.id);
+        this.db
+          .prepare(
+            "UPDATE support_threads SET pending_attention_request_id=NULL,updated_at=? WHERE id=? AND pending_attention_request_id=?",
+          )
           .run(now, row.thread_id, row.id);
-        this.db.prepare("UPDATE secure_action_tokens SET revoked_at=?,revoke_reason='ATTENTION_EXPIRED' WHERE attention_request_id=? AND revoked_at IS NULL")
+        this.db
+          .prepare(
+            "UPDATE secure_action_tokens SET revoked_at=?,revoke_reason='ATTENTION_EXPIRED' WHERE attention_request_id=? AND revoked_at IS NULL",
+          )
           .run(now, row.id);
         return null;
       }
       const status = input.status ?? "RESOLVED";
-      const changed = this.db.prepare(`UPDATE attention_requests
-        SET status=?,resolution_json=?,resolved_at=? WHERE id=? AND status='PENDING'`)
+      const changed = this.db
+        .prepare(
+          `UPDATE attention_requests
+        SET status=?,resolution_json=?,resolved_at=? WHERE id=? AND status='PENDING'`,
+        )
         .run(status, JSON.stringify(input.resolution), now, row.id);
       if (changed.changes !== 1) return null;
-      this.db.prepare("UPDATE support_threads SET pending_attention_request_id=NULL,updated_at=? WHERE id=? AND pending_attention_request_id=?")
+      this.db
+        .prepare(
+          "UPDATE support_threads SET pending_attention_request_id=NULL,updated_at=? WHERE id=? AND pending_attention_request_id=?",
+        )
         .run(now, row.thread_id, row.id);
-      this.db.prepare("UPDATE secure_action_tokens SET revoked_at=?,revoke_reason='ATTENTION_RESOLVED' WHERE attention_request_id=? AND revoked_at IS NULL")
+      this.db
+        .prepare(
+          "UPDATE secure_action_tokens SET revoked_at=?,revoke_reason='ATTENTION_RESOLVED' WHERE attention_request_id=? AND revoked_at IS NULL",
+        )
         .run(now, row.id);
       return this.getAttentionRequest(row.id);
     })();
   }
 
-  reserveLowConsequenceAttention(input:{id:string;expectedCallId:string;reservationId:string;choiceId:string;shortCode:string;messageId:string;now?:string}):AttentionRequestRecord|null{
-    return this.db.transaction(()=>{const now=input.now??new Date().toISOString();const row=this.db.prepare("SELECT * FROM attention_requests WHERE id=? AND call_id=? AND tier='LOW_CONSEQUENCE' AND status='PENDING' AND resolution_json IS NULL AND expires_at>?").get(input.id,input.expectedCallId,now) as AttentionRequestRow|undefined;if(!row)return null;const resolution={executionState:"RESERVED",reservationId:input.reservationId,choiceId:input.choiceId,shortCode:input.shortCode,messageId:input.messageId,channel:"SMS"};const changed=this.db.prepare("UPDATE attention_requests SET resolution_json=? WHERE id=? AND status='PENDING' AND resolution_json IS NULL").run(JSON.stringify(resolution),input.id);return changed.changes===1?this.getAttentionRequest(input.id):null;})();
+  reserveLowConsequenceAttention(input: {
+    id: string;
+    expectedCallId: string;
+    reservationId: string;
+    choiceId: string;
+    shortCode: string;
+    messageId: string;
+    now?: string;
+  }): AttentionRequestRecord | null {
+    return this.db.transaction(() => {
+      const now = input.now ?? new Date().toISOString();
+      const row = this.db
+        .prepare(
+          "SELECT * FROM attention_requests WHERE id=? AND call_id=? AND tier='LOW_CONSEQUENCE' AND status='PENDING' AND resolution_json IS NULL AND expires_at>?",
+        )
+        .get(input.id, input.expectedCallId, now) as AttentionRequestRow | undefined;
+      if (!row) return null;
+      const resolution = {
+        executionState: "RESERVED",
+        reservationId: input.reservationId,
+        choiceId: input.choiceId,
+        shortCode: input.shortCode,
+        messageId: input.messageId,
+        channel: "SMS",
+      };
+      const changed = this.db
+        .prepare(
+          "UPDATE attention_requests SET resolution_json=? WHERE id=? AND status='PENDING' AND resolution_json IS NULL",
+        )
+        .run(JSON.stringify(resolution), input.id);
+      return changed.changes === 1 ? this.getAttentionRequest(input.id) : null;
+    })();
   }
 
-  finishLowConsequenceAttention(input:{id:string;expectedCallId:string;reservationId:string;resolution:unknown;now?:string}):AttentionRequestRecord|null{
-    return this.db.transaction(()=>{const now=input.now??new Date().toISOString();const changed=this.db.prepare("UPDATE attention_requests SET status='RESOLVED',resolution_json=?,resolved_at=? WHERE id=? AND call_id=? AND status='PENDING' AND json_extract(resolution_json,'$.reservationId')=?").run(JSON.stringify(input.resolution),now,input.id,input.expectedCallId,input.reservationId);if(changed.changes!==1)return null;const row=this.db.prepare("SELECT thread_id FROM attention_requests WHERE id=?").get(input.id) as {thread_id:string};this.db.prepare("UPDATE support_threads SET pending_attention_request_id=NULL,updated_at=? WHERE id=? AND pending_attention_request_id=?").run(now,row.thread_id,input.id);return this.getAttentionRequest(input.id);})();
+  finishLowConsequenceAttention(input: {
+    id: string;
+    expectedCallId: string;
+    reservationId: string;
+    resolution: unknown;
+    now?: string;
+  }): AttentionRequestRecord | null {
+    return this.db.transaction(() => {
+      const now = input.now ?? new Date().toISOString();
+      const changed = this.db
+        .prepare(
+          "UPDATE attention_requests SET status='RESOLVED',resolution_json=?,resolved_at=? WHERE id=? AND call_id=? AND status='PENDING' AND json_extract(resolution_json,'$.reservationId')=?",
+        )
+        .run(JSON.stringify(input.resolution), now, input.id, input.expectedCallId, input.reservationId);
+      if (changed.changes !== 1) return null;
+      const row = this.db.prepare("SELECT thread_id FROM attention_requests WHERE id=?").get(input.id) as {
+        thread_id: string;
+      };
+      this.db
+        .prepare(
+          "UPDATE support_threads SET pending_attention_request_id=NULL,updated_at=? WHERE id=? AND pending_attention_request_id=?",
+        )
+        .run(now, row.thread_id, input.id);
+      return this.getAttentionRequest(input.id);
+    })();
   }
 
-  cancelLowConsequenceAttention(input:{id:string;expectedCallId:string;reservationId:string;reason:string;now?:string}):boolean{
-    return this.db.transaction(()=>{const now=input.now??new Date().toISOString();const changed=this.db.prepare("UPDATE attention_requests SET status='CANCELLED',resolution_json=?,resolved_at=? WHERE id=? AND call_id=? AND status='PENDING' AND json_extract(resolution_json,'$.reservationId')=?").run(JSON.stringify({executionState:"FAILED",reason:input.reason}),now,input.id,input.expectedCallId,input.reservationId);if(changed.changes!==1)return false;const row=this.db.prepare("SELECT thread_id FROM attention_requests WHERE id=?").get(input.id) as {thread_id:string};this.db.prepare("UPDATE support_threads SET pending_attention_request_id=NULL,state='FAILED',updated_at=? WHERE id=? AND pending_attention_request_id=?").run(now,row.thread_id,input.id);return true;})();
+  cancelLowConsequenceAttention(input: {
+    id: string;
+    expectedCallId: string;
+    reservationId: string;
+    reason: string;
+    now?: string;
+  }): boolean {
+    return this.db.transaction(() => {
+      const now = input.now ?? new Date().toISOString();
+      const changed = this.db
+        .prepare(
+          "UPDATE attention_requests SET status='CANCELLED',resolution_json=?,resolved_at=? WHERE id=? AND call_id=? AND status='PENDING' AND json_extract(resolution_json,'$.reservationId')=?",
+        )
+        .run(
+          JSON.stringify({ executionState: "FAILED", reason: input.reason }),
+          now,
+          input.id,
+          input.expectedCallId,
+          input.reservationId,
+        );
+      if (changed.changes !== 1) return false;
+      const row = this.db.prepare("SELECT thread_id FROM attention_requests WHERE id=?").get(input.id) as {
+        thread_id: string;
+      };
+      this.db
+        .prepare(
+          "UPDATE support_threads SET pending_attention_request_id=NULL,state='FAILED',updated_at=? WHERE id=? AND pending_attention_request_id=?",
+        )
+        .run(now, row.thread_id, input.id);
+      return true;
+    })();
   }
 
   /**
@@ -1627,51 +2345,139 @@ export class LiaisonDatabase {
   }): { token: SecureActionTokenRecord; request: AttentionRequestRecord } | null {
     return this.db.transaction(() => {
       const now = input.now ?? new Date().toISOString();
-      const token = this.db.prepare(`SELECT * FROM secure_action_tokens
+      const token = this.db
+        .prepare(
+          `SELECT * FROM secure_action_tokens
         WHERE token_hash=? AND action_type=? AND thread_id=? AND case_id IS ? AND call_id=? AND attention_request_id=?
-          AND expires_at>? AND revoked_at IS NULL AND (single_use=0 OR used_at IS NULL)`)
-        .get(input.tokenHash,input.actionType,input.threadId,input.caseId??null,input.callId,input.attentionRequestId,now) as SecureActionTokenRow | undefined;
-      const request = this.db.prepare("SELECT * FROM attention_requests WHERE id=? AND thread_id=? AND call_id=? AND status='PENDING' AND resolution_json IS NULL AND expires_at>?")
-        .get(input.attentionRequestId,input.threadId,input.callId,now) as AttentionRequestRow | undefined;
+          AND expires_at>? AND revoked_at IS NULL AND (single_use=0 OR used_at IS NULL)`,
+        )
+        .get(
+          input.tokenHash,
+          input.actionType,
+          input.threadId,
+          input.caseId ?? null,
+          input.callId,
+          input.attentionRequestId,
+          now,
+        ) as SecureActionTokenRow | undefined;
+      const request = this.db
+        .prepare(
+          "SELECT * FROM attention_requests WHERE id=? AND thread_id=? AND call_id=? AND status='PENDING' AND resolution_json IS NULL AND expires_at>?",
+        )
+        .get(input.attentionRequestId, input.threadId, input.callId, now) as AttentionRequestRow | undefined;
       if (!token || !request) return null;
-      const reservation = {executionState:"RESERVED",reservationId:input.reservationId,tokenId:token.id,reservedAt:now};
-      const reserved = this.db.prepare(`UPDATE attention_requests SET resolution_json=?
-        WHERE id=? AND thread_id=? AND call_id=? AND status='PENDING' AND resolution_json IS NULL AND expires_at>?`)
-        .run(JSON.stringify(reservation),request.id,input.threadId,input.callId,now);
+      const reservation = {
+        executionState: "RESERVED",
+        reservationId: input.reservationId,
+        tokenId: token.id,
+        reservedAt: now,
+      };
+      const reserved = this.db
+        .prepare(
+          `UPDATE attention_requests SET resolution_json=?
+        WHERE id=? AND thread_id=? AND call_id=? AND status='PENDING' AND resolution_json IS NULL AND expires_at>?`,
+        )
+        .run(JSON.stringify(reservation), request.id, input.threadId, input.callId, now);
       if (reserved.changes !== 1) return null;
-      const consumed = this.db.prepare(`UPDATE secure_action_tokens SET used_at=?
-        WHERE id=? AND revoked_at IS NULL AND expires_at>? AND (single_use=0 OR used_at IS NULL)`)
-        .run(now,token.id,now);
+      const consumed = this.db
+        .prepare(
+          `UPDATE secure_action_tokens SET used_at=?
+        WHERE id=? AND revoked_at IS NULL AND expires_at>? AND (single_use=0 OR used_at IS NULL)`,
+        )
+        .run(now, token.id, now);
       if (consumed.changes !== 1) throw new Error("ACTION_TOKEN_RESERVATION_FAILED");
-      return {token:secureActionTokenFromRow({...token,used_at:now}),request:attentionRequestFromRow({...request,resolution_json:JSON.stringify(reservation)})};
+      return {
+        token: secureActionTokenFromRow({ ...token, used_at: now }),
+        request: attentionRequestFromRow({ ...request, resolution_json: JSON.stringify(reservation) }),
+      };
     })();
   }
 
-  finishSecureAttentionResolution(input: {id:string;threadId:string;callId:string;reservationId:string;resolution:unknown;now?:string}): AttentionRequestRecord | null {
+  finishSecureAttentionResolution(input: {
+    id: string;
+    threadId: string;
+    callId: string;
+    reservationId: string;
+    resolution: unknown;
+    now?: string;
+  }): AttentionRequestRecord | null {
     return this.db.transaction(() => {
-      const now=input.now??new Date().toISOString();
-      const changed=this.db.prepare(`UPDATE attention_requests SET status='RESOLVED',resolution_json=?,resolved_at=?
-        WHERE id=? AND thread_id=? AND call_id=? AND status='PENDING' AND json_extract(resolution_json,'$.reservationId')=?`)
-        .run(JSON.stringify(input.resolution),now,input.id,input.threadId,input.callId,input.reservationId);
-      if(changed.changes!==1)return null;
-      this.db.prepare("UPDATE support_threads SET pending_attention_request_id=NULL,updated_at=? WHERE id=? AND pending_attention_request_id=?").run(now,input.threadId,input.id);
-      this.db.prepare("UPDATE secure_action_tokens SET revoked_at=?,revoke_reason='ATTENTION_RESOLVED' WHERE attention_request_id=? AND revoked_at IS NULL").run(now,input.id);
+      const now = input.now ?? new Date().toISOString();
+      const changed = this.db
+        .prepare(
+          `UPDATE attention_requests SET status='RESOLVED',resolution_json=?,resolved_at=?
+        WHERE id=? AND thread_id=? AND call_id=? AND status='PENDING' AND json_extract(resolution_json,'$.reservationId')=?`,
+        )
+        .run(JSON.stringify(input.resolution), now, input.id, input.threadId, input.callId, input.reservationId);
+      if (changed.changes !== 1) return null;
+      this.db
+        .prepare(
+          "UPDATE support_threads SET pending_attention_request_id=NULL,updated_at=? WHERE id=? AND pending_attention_request_id=?",
+        )
+        .run(now, input.threadId, input.id);
+      this.db
+        .prepare(
+          "UPDATE secure_action_tokens SET revoked_at=?,revoke_reason='ATTENTION_RESOLVED' WHERE attention_request_id=? AND revoked_at IS NULL",
+        )
+        .run(now, input.id);
       return this.getAttentionRequest(input.id);
     })();
   }
 
-  cancelSecureAttentionResolution(input:{id:string;threadId:string;callId:string;reservationId:string;reason:string;now?:string}):boolean{
-    return this.db.transaction(()=>{const now=input.now??new Date().toISOString();const changed=this.db.prepare(`UPDATE attention_requests SET status='CANCELLED',resolution_json=?,resolved_at=?
-      WHERE id=? AND thread_id=? AND call_id=? AND status='PENDING' AND json_extract(resolution_json,'$.reservationId')=?`).run(JSON.stringify({executionState:"FAILED",reason:input.reason}),now,input.id,input.threadId,input.callId,input.reservationId);if(changed.changes!==1)return false;this.db.prepare("UPDATE support_threads SET pending_attention_request_id=NULL,updated_at=? WHERE id=? AND pending_attention_request_id=?").run(now,input.threadId,input.id);this.db.prepare("UPDATE secure_action_tokens SET revoked_at=?,revoke_reason='ATTENTION_EXECUTION_FAILED' WHERE attention_request_id=? AND revoked_at IS NULL").run(now,input.id);return true;})();
+  cancelSecureAttentionResolution(input: {
+    id: string;
+    threadId: string;
+    callId: string;
+    reservationId: string;
+    reason: string;
+    now?: string;
+  }): boolean {
+    return this.db.transaction(() => {
+      const now = input.now ?? new Date().toISOString();
+      const changed = this.db
+        .prepare(
+          `UPDATE attention_requests SET status='CANCELLED',resolution_json=?,resolved_at=?
+      WHERE id=? AND thread_id=? AND call_id=? AND status='PENDING' AND json_extract(resolution_json,'$.reservationId')=?`,
+        )
+        .run(
+          JSON.stringify({ executionState: "FAILED", reason: input.reason }),
+          now,
+          input.id,
+          input.threadId,
+          input.callId,
+          input.reservationId,
+        );
+      if (changed.changes !== 1) return false;
+      this.db
+        .prepare(
+          "UPDATE support_threads SET pending_attention_request_id=NULL,updated_at=? WHERE id=? AND pending_attention_request_id=?",
+        )
+        .run(now, input.threadId, input.id);
+      this.db
+        .prepare(
+          "UPDATE secure_action_tokens SET revoked_at=?,revoke_reason='ATTENTION_EXECUTION_FAILED' WHERE attention_request_id=? AND revoked_at IS NULL",
+        )
+        .run(now, input.id);
+      return true;
+    })();
   }
 
   expireAttentionRequests(now = new Date().toISOString()): number {
     return this.db.transaction(() => {
-      const rows = this.db.prepare("SELECT id,thread_id FROM attention_requests WHERE status='PENDING' AND resolution_json IS NULL AND expires_at<=?")
-        .all(now) as Array<{id:string;thread_id:string}>;
-      const expire = this.db.prepare("UPDATE attention_requests SET status='EXPIRED',resolved_at=? WHERE id=? AND status='PENDING' AND resolution_json IS NULL");
-      const clear = this.db.prepare("UPDATE support_threads SET pending_attention_request_id=NULL,updated_at=? WHERE id=? AND pending_attention_request_id=?");
-      const revoke = this.db.prepare("UPDATE secure_action_tokens SET revoked_at=?,revoke_reason='ATTENTION_EXPIRED' WHERE attention_request_id=? AND revoked_at IS NULL");
+      const rows = this.db
+        .prepare(
+          "SELECT id,thread_id FROM attention_requests WHERE status='PENDING' AND resolution_json IS NULL AND expires_at<=?",
+        )
+        .all(now) as Array<{ id: string; thread_id: string }>;
+      const expire = this.db.prepare(
+        "UPDATE attention_requests SET status='EXPIRED',resolved_at=? WHERE id=? AND status='PENDING' AND resolution_json IS NULL",
+      );
+      const clear = this.db.prepare(
+        "UPDATE support_threads SET pending_attention_request_id=NULL,updated_at=? WHERE id=? AND pending_attention_request_id=?",
+      );
+      const revoke = this.db.prepare(
+        "UPDATE secure_action_tokens SET revoked_at=?,revoke_reason='ATTENTION_EXPIRED' WHERE attention_request_id=? AND revoked_at IS NULL",
+      );
       let count = 0;
       for (const row of rows) {
         count += expire.run(now, row.id).changes;
@@ -1695,9 +2501,12 @@ export class LiaisonDatabase {
     now?: string;
   }): SecureActionTokenRecord {
     const now = input.now ?? new Date().toISOString();
-    this.db.prepare(`INSERT INTO secure_action_tokens
+    this.db
+      .prepare(
+        `INSERT INTO secure_action_tokens
       (id,token_hash,action_type,thread_id,case_id,call_id,attention_request_id,single_use,created_at,expires_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      )
       .run(
         input.id,
         input.tokenHash,
@@ -1715,7 +2524,9 @@ export class LiaisonDatabase {
   }
 
   getSecureActionToken(tokenHash: string): SecureActionTokenRecord | null {
-    const row = this.db.prepare("SELECT * FROM secure_action_tokens WHERE token_hash=?").get(tokenHash) as SecureActionTokenRow | undefined;
+    const row = this.db.prepare("SELECT * FROM secure_action_tokens WHERE token_hash=?").get(tokenHash) as
+      | SecureActionTokenRow
+      | undefined;
     return row ? secureActionTokenFromRow(row) : null;
   }
 
@@ -1730,9 +2541,12 @@ export class LiaisonDatabase {
   }): SecureActionTokenRecord | null {
     return this.db.transaction(() => {
       const now = input.now ?? new Date().toISOString();
-      const row = this.db.prepare(`SELECT * FROM secure_action_tokens
+      const row = this.db
+        .prepare(
+          `SELECT * FROM secure_action_tokens
         WHERE token_hash=? AND action_type=? AND thread_id=? AND case_id IS ? AND call_id IS ? AND attention_request_id IS ?
-          AND expires_at>? AND revoked_at IS NULL AND (single_use=0 OR used_at IS NULL)`)
+          AND expires_at>? AND revoked_at IS NULL AND (single_use=0 OR used_at IS NULL)`,
+        )
         .get(
           input.tokenHash,
           input.actionType,
@@ -1743,8 +2557,11 @@ export class LiaisonDatabase {
           now,
         ) as SecureActionTokenRow | undefined;
       if (!row) return null;
-      const changed = this.db.prepare(`UPDATE secure_action_tokens SET used_at=?
-        WHERE id=? AND revoked_at IS NULL AND expires_at>? AND (single_use=0 OR used_at IS NULL)`)
+      const changed = this.db
+        .prepare(
+          `UPDATE secure_action_tokens SET used_at=?
+        WHERE id=? AND revoked_at IS NULL AND expires_at>? AND (single_use=0 OR used_at IS NULL)`,
+        )
         .run(now, row.id, now);
       if (changed.changes !== 1) return null;
       return secureActionTokenFromRow({ ...row, used_at: now });
@@ -1764,13 +2581,20 @@ export class LiaisonDatabase {
     if (scope.every((value) => value === undefined)) throw new Error("TOKEN_SCOPE_REQUIRED");
     const clauses = ["revoked_at IS NULL"];
     const values: unknown[] = [input.now ?? new Date().toISOString(), input.reason];
-    const add = (column: string, value: string | undefined): void => { if (value !== undefined) { clauses.push(`${column}=?`); values.push(value); } };
+    const add = (column: string, value: string | undefined): void => {
+      if (value !== undefined) {
+        clauses.push(`${column}=?`);
+        values.push(value);
+      }
+    };
     add("token_hash", input.tokenHash);
     add("thread_id", input.threadId);
     add("case_id", input.caseId);
     add("call_id", input.callId);
     add("attention_request_id", input.attentionRequestId);
-    return this.db.prepare(`UPDATE secure_action_tokens SET revoked_at=?,revoke_reason=? WHERE ${clauses.join(" AND ")}`).run(...values).changes;
+    return this.db
+      .prepare(`UPDATE secure_action_tokens SET revoked_at=?,revoke_reason=? WHERE ${clauses.join(" AND ")}`)
+      .run(...values).changes;
   }
 
   createCommitment(input: {
@@ -1787,13 +2611,19 @@ export class LiaisonDatabase {
     evidence: EvidenceReferenceRecord[];
     now?: string;
   }): CommitmentRecord {
-    if (input.evidence.length === 0 || input.evidence.some((item) => item.turnId.trim() === "" || item.exactQuote.trim() === "")) {
+    if (
+      input.evidence.length === 0 ||
+      input.evidence.some((item) => item.turnId.trim() === "" || item.exactQuote.trim() === "")
+    ) {
       throw new Error("COMMITMENT_EVIDENCE_REQUIRED");
     }
     const now = input.now ?? new Date().toISOString();
-    this.db.prepare(`INSERT INTO commitments
+    this.db
+      .prepare(
+        `INSERT INTO commitments
       (id,thread_id,case_id,call_id,party,status,description,amount_cents,deadline,recurring,evidence_json,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
       .run(
         input.id,
         input.threadId,
@@ -1816,12 +2646,22 @@ export class LiaisonDatabase {
   listCommitments(input: { threadId?: string; caseId?: string; callId?: string } = {}): CommitmentRecord[] {
     const clauses: string[] = [];
     const values: string[] = [];
-    if (input.threadId) { clauses.push("thread_id=?"); values.push(input.threadId); }
-    if (input.caseId) { clauses.push("case_id=?"); values.push(input.caseId); }
-    if (input.callId) { clauses.push("call_id=?"); values.push(input.callId); }
+    if (input.threadId) {
+      clauses.push("thread_id=?");
+      values.push(input.threadId);
+    }
+    if (input.caseId) {
+      clauses.push("case_id=?");
+      values.push(input.caseId);
+    }
+    if (input.callId) {
+      clauses.push("call_id=?");
+      values.push(input.callId);
+    }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    return (this.db.prepare(`SELECT * FROM commitments ${where} ORDER BY created_at,id`).all(...values) as CommitmentRow[])
-      .map(commitmentFromRow);
+    return (
+      this.db.prepare(`SELECT * FROM commitments ${where} ORDER BY created_at,id`).all(...values) as CommitmentRow[]
+    ).map(commitmentFromRow);
   }
 
   transitionCommitment(input: {
@@ -1831,15 +2671,21 @@ export class LiaisonDatabase {
     evidence?: EvidenceReferenceRecord[];
     now?: string;
   }): boolean {
-    if (input.evidence && (input.evidence.length === 0 || input.evidence.some((item) => item.turnId.trim() === "" || item.exactQuote.trim() === ""))) {
+    if (
+      input.evidence &&
+      (input.evidence.length === 0 ||
+        input.evidence.some((item) => item.turnId.trim() === "" || item.exactQuote.trim() === ""))
+    ) {
       throw new Error("COMMITMENT_EVIDENCE_REQUIRED");
     }
     const now = input.now ?? new Date().toISOString();
     const result = input.evidence
-      ? this.db.prepare("UPDATE commitments SET status=?,evidence_json=?,updated_at=? WHERE id=? AND status=?")
-        .run(input.to, JSON.stringify(input.evidence), now, input.id, input.from)
-      : this.db.prepare("UPDATE commitments SET status=?,updated_at=? WHERE id=? AND status=?")
-        .run(input.to, now, input.id, input.from);
+      ? this.db
+          .prepare("UPDATE commitments SET status=?,evidence_json=?,updated_at=? WHERE id=? AND status=?")
+          .run(input.to, JSON.stringify(input.evidence), now, input.id, input.from)
+      : this.db
+          .prepare("UPDATE commitments SET status=?,updated_at=? WHERE id=? AND status=?")
+          .run(input.to, now, input.id, input.from);
     return result.changes === 1;
   }
 
@@ -1855,9 +2701,12 @@ export class LiaisonDatabase {
     createdAt?: string;
   }): { created: boolean; event: SemanticCallEventRecord } {
     const createdAt = input.createdAt ?? new Date().toISOString();
-    const result = this.db.prepare(`INSERT OR IGNORE INTO semantic_call_events
+    const result = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO semantic_call_events
       (id,thread_id,case_id,call_id,event_type,semantic_key,payload_json,occurred_at,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?)`)
+      VALUES (?,?,?,?,?,?,?,?,?)`,
+      )
       .run(
         input.id,
         input.threadId,
@@ -1869,20 +2718,26 @@ export class LiaisonDatabase {
         input.occurredAt,
         createdAt,
       );
-    const row = this.db.prepare("SELECT * FROM semantic_call_events WHERE call_id=? AND semantic_key=?")
+    const row = this.db
+      .prepare("SELECT * FROM semantic_call_events WHERE call_id=? AND semantic_key=?")
       .get(input.callId, input.semanticKey) as SemanticCallEventRow | undefined;
     if (!row) throw new Error("SEMANTIC_EVENT_IDEMPOTENCY_CONFLICT");
     return { created: result.changes === 1, event: semanticCallEventFromRow(row) };
   }
 
   getSemanticCallEvent(callId: string, semanticKey: string): SemanticCallEventRecord | null {
-    const row = this.db.prepare("SELECT * FROM semantic_call_events WHERE call_id=? AND semantic_key=?").get(callId, semanticKey) as SemanticCallEventRow | undefined;
+    const row = this.db
+      .prepare("SELECT * FROM semantic_call_events WHERE call_id=? AND semantic_key=?")
+      .get(callId, semanticKey) as SemanticCallEventRow | undefined;
     return row ? semanticCallEventFromRow(row) : null;
   }
 
   listSemanticCallEvents(callId: string): SemanticCallEventRecord[] {
-    return (this.db.prepare("SELECT * FROM semantic_call_events WHERE call_id=? ORDER BY occurred_at,id").all(callId) as SemanticCallEventRow[])
-      .map(semanticCallEventFromRow);
+    return (
+      this.db
+        .prepare("SELECT * FROM semantic_call_events WHERE call_id=? ORDER BY occurred_at,id")
+        .all(callId) as SemanticCallEventRow[]
+    ).map(semanticCallEventFromRow);
   }
 
   createConditionalAuthorityRule(input: {
@@ -1897,9 +2752,12 @@ export class LiaisonDatabase {
     now?: string;
   }): ConditionalAuthorityRuleRecord {
     const now = input.now ?? new Date().toISOString();
-    this.db.prepare(`INSERT INTO conditional_authority_rules
+    this.db
+      .prepare(
+        `INSERT INTO conditional_authority_rules
       (id,thread_id,case_id,action_type,condition_json,permission,priority,active,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      )
       .run(
         input.id,
         input.threadId,
@@ -1912,31 +2770,56 @@ export class LiaisonDatabase {
         now,
         now,
       );
-    const row = this.db.prepare("SELECT * FROM conditional_authority_rules WHERE id=?").get(input.id) as ConditionalAuthorityRuleRow;
+    const row = this.db
+      .prepare("SELECT * FROM conditional_authority_rules WHERE id=?")
+      .get(input.id) as ConditionalAuthorityRuleRow;
     return conditionalAuthorityRuleFromRow(row);
   }
 
   listConditionalAuthorityRules(threadId: string, caseId?: string | null): ConditionalAuthorityRuleRecord[] {
-    const rows = caseId === undefined
-      ? this.db.prepare("SELECT * FROM conditional_authority_rules WHERE thread_id=? AND active=1 ORDER BY priority DESC,created_at,id").all(threadId)
-      : this.db.prepare("SELECT * FROM conditional_authority_rules WHERE thread_id=? AND active=1 AND (case_id IS NULL OR case_id IS ?) ORDER BY priority DESC,created_at,id").all(threadId, caseId);
+    const rows =
+      caseId === undefined
+        ? this.db
+            .prepare(
+              "SELECT * FROM conditional_authority_rules WHERE thread_id=? AND active=1 ORDER BY priority DESC,created_at,id",
+            )
+            .all(threadId)
+        : this.db
+            .prepare(
+              "SELECT * FROM conditional_authority_rules WHERE thread_id=? AND active=1 AND (case_id IS NULL OR case_id IS ?) ORDER BY priority DESC,created_at,id",
+            )
+            .all(threadId, caseId);
     return (rows as ConditionalAuthorityRuleRow[]).map(conditionalAuthorityRuleFromRow);
   }
 
   deactivateConditionalAuthorityRule(id: string, now = new Date().toISOString()): boolean {
-    return this.db.prepare("UPDATE conditional_authority_rules SET active=0,updated_at=? WHERE id=? AND active=1").run(now, id).changes === 1;
+    return (
+      this.db
+        .prepare("UPDATE conditional_authority_rules SET active=0,updated_at=? WHERE id=? AND active=1")
+        .run(now, id).changes === 1
+    );
   }
 
   listDeadLetterWork(limit = 100): MessagingWorkItemRecord[] {
     const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
-    return (this.db.prepare("SELECT * FROM messaging_work_items WHERE state='DEAD_LETTER' ORDER BY updated_at DESC,id DESC LIMIT ?").all(safeLimit) as WorkItemRow[])
-      .map(workItemFromRow);
+    return (
+      this.db
+        .prepare(
+          "SELECT * FROM messaging_work_items WHERE state='DEAD_LETTER' ORDER BY updated_at DESC,id DESC LIMIT ?",
+        )
+        .all(safeLimit) as WorkItemRow[]
+    ).map(workItemFromRow);
   }
 
   listFailedOutboundMessages(limit = 100): OutboundMessageRecord[] {
     const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
-    return (this.db.prepare("SELECT * FROM outbound_messages WHERE processing_state='DEAD_LETTER' OR delivery_state IN ('FAILED','UNDELIVERED') ORDER BY status_updated_at DESC,id DESC LIMIT ?").all(safeLimit) as OutboundMessageRow[])
-      .map(outboundMessageFromRow);
+    return (
+      this.db
+        .prepare(
+          "SELECT * FROM outbound_messages WHERE processing_state='DEAD_LETTER' OR delivery_state IN ('FAILED','UNDELIVERED') ORDER BY status_updated_at DESC,id DESC LIMIT ?",
+        )
+        .all(safeLimit) as OutboundMessageRow[]
+    ).map(outboundMessageFromRow);
   }
 
   /**
@@ -1945,8 +2828,16 @@ export class LiaisonDatabase {
    */
   sumBillableOutboundSegments(threadId?: string): number {
     const row = threadId
-      ? this.db.prepare("SELECT COALESCE(SUM(segment_estimate),0) AS total FROM outbound_messages WHERE provider_kind='TWILIO_SMS' AND processing_state='COMPLETED' AND thread_id=?").get(threadId)
-      : this.db.prepare("SELECT COALESCE(SUM(segment_estimate),0) AS total FROM outbound_messages WHERE provider_kind='TWILIO_SMS' AND processing_state='COMPLETED'").get();
+      ? this.db
+          .prepare(
+            "SELECT COALESCE(SUM(segment_estimate),0) AS total FROM outbound_messages WHERE provider_kind='TWILIO_SMS' AND processing_state='COMPLETED' AND thread_id=?",
+          )
+          .get(threadId)
+      : this.db
+          .prepare(
+            "SELECT COALESCE(SUM(segment_estimate),0) AS total FROM outbound_messages WHERE provider_kind='TWILIO_SMS' AND processing_state='COMPLETED'",
+          )
+          .get();
     return (row as { total: number }).total;
   }
 
@@ -1954,69 +2845,343 @@ export class LiaisonDatabase {
     return (this.db.prepare("SELECT COUNT(*) AS total FROM provider_security_events").get() as { total: number }).total;
   }
 
-  createCall(call: { id: string; caseId: string; mode: "SIMULATOR"|"TWILIO"; scenarioId: string|null; state: CallState; activity: string; objective: string; authorizationId?: string }): void {
+  createCall(call: {
+    id: string;
+    caseId: string;
+    mode: "SIMULATOR" | "TWILIO";
+    scenarioId: string | null;
+    state: CallState;
+    activity: string;
+    objective: string;
+    authorizationId?: string;
+  }): void {
     this.db.transaction(() => {
       if (call.mode === "TWILIO" && !call.authorizationId) throw new Error("CALL_AUTHORIZATION_REQUIRED");
       if (call.authorizationId) {
-        const authorization = this.db.prepare(`SELECT id FROM call_authorizations
+        const authorization = this.db
+          .prepare(
+            `SELECT id FROM call_authorizations
           WHERE id=? AND case_id=? AND consumed_at IS NOT NULL AND revoked_at IS NULL AND telephony_mode IS ?
             AND destination_e164 IS (SELECT json_extract(brief_json,'$.phoneNumberE164') FROM cases WHERE id=?)
             AND plan_version IS (SELECT approved_version FROM cases WHERE id=?)
-            AND plan_version IS (SELECT json_extract(brief_json,'$.version') FROM cases WHERE id=?)`).get(call.authorizationId, call.caseId, call.mode.toLowerCase(), call.caseId,call.caseId,call.caseId) as {id:string}|undefined;
+            AND plan_version IS (SELECT json_extract(brief_json,'$.version') FROM cases WHERE id=?)`,
+          )
+          .get(call.authorizationId, call.caseId, call.mode.toLowerCase(), call.caseId, call.caseId, call.caseId) as
+          | { id: string }
+          | undefined;
         if (!authorization) throw new Error("CONSUMED_CALL_AUTHORIZATION_REQUIRED");
       }
-      this.db.prepare("INSERT INTO calls (id,case_id,mode,scenario_id,state,activity,objective,authorization_id,started_at) VALUES (?,?,?,?,?,?,?,?,?)")
-        .run(call.id, call.caseId, call.mode, call.scenarioId, call.state, call.activity, call.objective, call.authorizationId ?? null, new Date().toISOString());
-      this.db.prepare("UPDATE cases SET status='IN_CALL', updated_at=? WHERE id=?").run(new Date().toISOString(), call.caseId);
+      this.db
+        .prepare(
+          "INSERT INTO calls (id,case_id,mode,scenario_id,state,activity,objective,authorization_id,started_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        )
+        .run(
+          call.id,
+          call.caseId,
+          call.mode,
+          call.scenarioId,
+          call.state,
+          call.activity,
+          call.objective,
+          call.authorizationId ?? null,
+          new Date().toISOString(),
+        );
+      this.db
+        .prepare("UPDATE cases SET status='IN_CALL', updated_at=? WHERE id=?")
+        .run(new Date().toISOString(), call.caseId);
     })();
   }
-  getCall(id: string): CallRow | null { return (this.db.prepare("SELECT * FROM calls WHERE id=?").get(id) as CallRow | undefined) ?? null; }
-  getActiveCall(): CallRow | null { return (this.db.prepare("SELECT * FROM calls WHERE state NOT IN ('COMPLETED','FAILED') ORDER BY started_at DESC LIMIT 1").get() as CallRow | undefined) ?? null; }
-  adoptTwilioCallSidForAmbiguousStart(id:string,providerCallSid:string):boolean {
-    if(!providerCallSid)return false;
-    const result=this.db.prepare(`UPDATE calls SET twilio_call_sid=?
+  getCall(id: string): CallRow | null {
+    return (this.db.prepare("SELECT * FROM calls WHERE id=?").get(id) as CallRow | undefined) ?? null;
+  }
+  getActiveCall(): CallRow | null {
+    return (
+      (this.db
+        .prepare("SELECT * FROM calls WHERE state NOT IN ('COMPLETED','FAILED') ORDER BY started_at DESC LIMIT 1")
+        .get() as CallRow | undefined) ?? null
+    );
+  }
+  adoptTwilioCallSidForAmbiguousStart(id: string, providerCallSid: string): boolean {
+    if (!providerCallSid) return false;
+    const result = this.db
+      .prepare(
+        `UPDATE calls SET twilio_call_sid=?
       WHERE id=? AND mode='TWILIO' AND twilio_call_sid IS NULL
         AND (state='DIALING' OR (state='ENDING' AND terminal_reason LIKE 'AMBIGUOUS_START:%'))
-        AND NOT EXISTS (SELECT 1 FROM calls existing WHERE existing.twilio_call_sid=?)`)
-      .run(providerCallSid,id,providerCallSid);
-    return result.changes===1;
+        AND NOT EXISTS (SELECT 1 FROM calls existing WHERE existing.twilio_call_sid=?)`,
+      )
+      .run(providerCallSid, id, providerCallSid);
+    return result.changes === 1;
   }
-  updateCall(id: string, fields: Partial<{ state: CallState; activity: string; objective: string; paused: boolean; humanDetected: boolean; disclosureDelivered: boolean; consentStatus: CallRow["consent_status"]; generation: number; twilioCallSid: string; endedAt: string; durationSeconds: number; estimatedCostUsd: number; terminalReason: string }>): void {
-    const mapping: Record<string,string> = { state:"state", activity:"activity", objective:"objective", paused:"paused", humanDetected:"human_detected", disclosureDelivered:"disclosure_delivered", consentStatus:"consent_status", generation:"generation", twilioCallSid:"twilio_call_sid", endedAt:"ended_at", durationSeconds:"duration_seconds", estimatedCostUsd:"estimated_cost_usd", terminalReason:"terminal_reason" };
-    const entries = Object.entries(fields).filter(([,v]) => v !== undefined);
+  updateCall(
+    id: string,
+    fields: Partial<{
+      state: CallState;
+      activity: string;
+      objective: string;
+      paused: boolean;
+      humanDetected: boolean;
+      disclosureDelivered: boolean;
+      consentStatus: CallRow["consent_status"];
+      generation: number;
+      twilioCallSid: string;
+      endedAt: string;
+      durationSeconds: number;
+      estimatedCostUsd: number;
+      terminalReason: string;
+    }>,
+  ): void {
+    const mapping: Record<string, string> = {
+      state: "state",
+      activity: "activity",
+      objective: "objective",
+      paused: "paused",
+      humanDetected: "human_detected",
+      disclosureDelivered: "disclosure_delivered",
+      consentStatus: "consent_status",
+      generation: "generation",
+      twilioCallSid: "twilio_call_sid",
+      endedAt: "ended_at",
+      durationSeconds: "duration_seconds",
+      estimatedCostUsd: "estimated_cost_usd",
+      terminalReason: "terminal_reason",
+    };
+    const entries = Object.entries(fields).filter(([, v]) => v !== undefined);
     if (!entries.length) return;
-    const values = entries.map(([,v]) => typeof v === "boolean" ? Number(v) : v);
-    this.db.prepare(`UPDATE calls SET ${entries.map(([k]) => `${mapping[k]}=?`).join(",")} WHERE id=?`).run(...values, id);
+    const values = entries.map(([, v]) => (typeof v === "boolean" ? Number(v) : v));
+    this.db
+      .prepare(`UPDATE calls SET ${entries.map(([k]) => `${mapping[k]}=?`).join(",")} WHERE id=?`)
+      .run(...values, id);
   }
-  addModelUsage(callId:string,inputTokens:number,outputTokens:number):void { this.db.prepare("UPDATE calls SET llm_input_tokens=llm_input_tokens+?, llm_output_tokens=llm_output_tokens+? WHERE id=?").run(inputTokens,outputTokens,callId); }
-  appendEvent(input: { id: string; callId?: string; caseId?: string; type: EventType; payload: unknown; origin: string; idempotencyKey?: string }): number {
-    const sequence = Number((this.db.prepare("SELECT COALESCE(MAX(sequence),0)+1 AS n FROM events WHERE call_id IS ? AND case_id IS ?").get(input.callId ?? null, input.caseId ?? null) as {n:number}).n);
-    this.db.prepare("INSERT OR IGNORE INTO events (id,call_id,case_id,sequence,timestamp,type,payload_json,origin,idempotency_key) VALUES (?,?,?,?,?,?,?,?,?)")
-      .run(input.id, input.callId ?? null, input.caseId ?? null, sequence, new Date().toISOString(), input.type, JSON.stringify(input.payload), input.origin, input.idempotencyKey ?? null);
+  addModelUsage(callId: string, inputTokens: number, outputTokens: number): void {
+    this.db
+      .prepare("UPDATE calls SET llm_input_tokens=llm_input_tokens+?, llm_output_tokens=llm_output_tokens+? WHERE id=?")
+      .run(inputTokens, outputTokens, callId);
+  }
+  appendEvent(input: {
+    id: string;
+    callId?: string;
+    caseId?: string;
+    type: EventType;
+    payload: unknown;
+    origin: string;
+    idempotencyKey?: string;
+  }): number {
+    const sequence = Number(
+      (
+        this.db
+          .prepare("SELECT COALESCE(MAX(sequence),0)+1 AS n FROM events WHERE call_id IS ? AND case_id IS ?")
+          .get(input.callId ?? null, input.caseId ?? null) as { n: number }
+      ).n,
+    );
+    this.db
+      .prepare(
+        "INSERT OR IGNORE INTO events (id,call_id,case_id,sequence,timestamp,type,payload_json,origin,idempotency_key) VALUES (?,?,?,?,?,?,?,?,?)",
+      )
+      .run(
+        input.id,
+        input.callId ?? null,
+        input.caseId ?? null,
+        sequence,
+        new Date().toISOString(),
+        input.type,
+        JSON.stringify(input.payload),
+        input.origin,
+        input.idempotencyKey ?? null,
+      );
     return sequence;
   }
-  addTranscript(callId: string, turn: TranscriptTurn): void { this.db.prepare("INSERT INTO transcript_turns (id,call_id,sequence,speaker,text,timestamp) VALUES (?,?,?,?,?,?)").run(turn.id, callId, turn.sequence, turn.speaker, turn.text, turn.timestamp); }
-  getTranscript(callId: string): TranscriptTurn[] { return (this.db.prepare("SELECT id,sequence,speaker,text,timestamp FROM transcript_turns WHERE call_id=? ORDER BY sequence").all(callId) as TranscriptTurn[]); }
-  saveApproval(approval: ApprovalRequest): void { this.db.prepare("INSERT INTO approval_requests (id,call_id,status,data_json,created_at,expires_at) VALUES (?,?,?,?,?,?)").run(approval.id, approval.callId, approval.status, JSON.stringify(approval), approval.createdAt, approval.expiresAt); }
-  getPendingApproval(callId: string): ApprovalRequest | null { const r=this.db.prepare("SELECT data_json,status FROM approval_requests WHERE call_id=? AND status='PENDING' ORDER BY created_at DESC LIMIT 1").get(callId) as {data_json:string;status:string}|undefined; return r ? { ...(JSON.parse(r.data_json) as ApprovalRequest), status: r.status as ApprovalRequest["status"] } : null; }
-  updateApproval(id: string, from: string, to: string): boolean { const result=this.db.prepare("UPDATE approval_requests SET status=?, data_json=json_set(data_json,'$.status',?) WHERE id=? AND status=?").run(to,to,id,from); return result.changes===1; }
-  getApproval(id:string):ApprovalRequest|null { const r=this.db.prepare("SELECT data_json,status FROM approval_requests WHERE id=?").get(id) as {data_json:string;status:string}|undefined;return r?{...(JSON.parse(r.data_json) as ApprovalRequest),status:r.status as ApprovalRequest["status"]}:null; }
-  getApprovalExecution(approvalId:string):ApprovalExecutionRecord|null { const row=this.db.prepare("SELECT * FROM approval_executions WHERE approval_id=?").get(approvalId) as ApprovalExecutionRow|undefined;return row?approvalExecutionFromRow(row):null; }
-  reserveApprovalExecution(input:{approvalId:string;callId:string;decision:"APPROVE"|"REJECT";payloadFingerprint:string;targetStatus:"APPROVED"|"REJECTED"|"REPLACED";executionId:string;now?:string}):{kind:"RESERVED"|"EXISTING";execution:ApprovalExecutionRecord} {
-    return this.db.transaction(():{kind:"RESERVED"|"EXISTING";execution:ApprovalExecutionRecord}=>{const now=input.now??new Date().toISOString();const existing=this.getApprovalExecution(input.approvalId);if(existing)return{kind:"EXISTING",execution:existing};const approval=this.db.prepare("SELECT status,call_id FROM approval_requests WHERE id=?").get(input.approvalId) as {status:string;call_id:string}|undefined;if(!approval||approval.call_id!==input.callId||approval.status!=="PENDING")throw new Error("APPROVAL_NOT_PENDING");this.db.prepare("INSERT INTO approval_executions (approval_id,call_id,decision,payload_fingerprint,target_status,execution_id,state,reserved_at) VALUES (?,?,?,?,?,?,'RESERVED',?)").run(input.approvalId,input.callId,input.decision,input.payloadFingerprint,input.targetStatus,input.executionId,now);return{kind:"RESERVED",execution:this.getApprovalExecution(input.approvalId)!};})();
+  addTranscript(callId: string, turn: TranscriptTurn): void {
+    this.db
+      .prepare("INSERT INTO transcript_turns (id,call_id,sequence,speaker,text,timestamp) VALUES (?,?,?,?,?,?)")
+      .run(turn.id, callId, turn.sequence, turn.speaker, turn.text, turn.timestamp);
   }
-  completeApprovalExecution(input:{approvalId:string;executionId:string;targetStatus:"APPROVED"|"REJECTED"|"REPLACED";now?:string}):boolean { return this.db.transaction(()=>{const now=input.now??new Date().toISOString();const execution=this.db.prepare("UPDATE approval_executions SET state='SUCCEEDED',completed_at=?,error_code=NULL WHERE approval_id=? AND execution_id=? AND state='RESERVED'").run(now,input.approvalId,input.executionId);if(execution.changes!==1)return false;const approval=this.db.prepare("UPDATE approval_requests SET status=?,data_json=json_set(data_json,'$.status',?) WHERE id=? AND status='PENDING'").run(input.targetStatus,input.targetStatus,input.approvalId);if(approval.changes!==1)throw new Error("APPROVAL_FINALIZATION_FAILED");return true;})(); }
-  failApprovalExecution(input:{approvalId:string;executionId:string;errorCode:string;now?:string}):boolean { return this.db.transaction(()=>{const now=input.now??new Date().toISOString();const execution=this.db.prepare("UPDATE approval_executions SET state='FAILED',completed_at=?,error_code=? WHERE approval_id=? AND execution_id=? AND state='RESERVED'").run(now,input.errorCode,input.approvalId,input.executionId);if(execution.changes!==1)return false;const approval=this.db.prepare("UPDATE approval_requests SET status='EXECUTION_FAILED',data_json=json_set(data_json,'$.status','EXECUTION_FAILED') WHERE id=? AND status='PENDING'").run(input.approvalId);if(approval.changes!==1)throw new Error("APPROVAL_FAILURE_FINALIZATION_FAILED");return true;})(); }
-  saveOutcome(callId: string, report: OutcomeReport, now = new Date().toISOString()): boolean { return this.db.prepare("INSERT OR IGNORE INTO outcome_reports (call_id,report_json,created_at) VALUES (?,?,?)").run(callId,JSON.stringify(report),now).changes===1; }
-  replaceOutcome(callId: string, report: OutcomeReport): boolean { return this.db.prepare("UPDATE outcome_reports SET report_json=? WHERE call_id=?").run(JSON.stringify(report),callId).changes===1; }
-  getOutcome(callId: string): OutcomeReport | null { const r=this.db.prepare("SELECT report_json FROM outcome_reports WHERE call_id=?").get(callId) as {report_json:string}|undefined; return r ? JSON.parse(r.report_json) as OutcomeReport : null; }
-  listTerminalCallsWithoutOutcome(): CallRow[] { return this.db.prepare(`SELECT calls.* FROM calls LEFT JOIN outcome_reports ON outcome_reports.call_id=calls.id WHERE calls.state IN ('COMPLETED','FAILED') AND outcome_reports.call_id IS NULL ORDER BY calls.ended_at,calls.id`).all() as CallRow[]; }
-  listEvents(callId: string, after=0): Array<{ sequence:number; type:string; payload:unknown; timestamp:string }> { return (this.db.prepare("SELECT sequence,type,payload_json,timestamp FROM events WHERE call_id=? AND sequence>? ORDER BY sequence").all(callId,after) as Array<{sequence:number;type:string;payload_json:string;timestamp:string}>).map((r)=>({sequence:r.sequence,type:r.type,payload:JSON.parse(r.payload_json) as unknown,timestamp:r.timestamp})); }
-  incrementDailyUsage(day: string, limit: number): boolean { const tx=this.db.transaction(()=>{ const row=this.db.prepare("SELECT count FROM daily_call_usage WHERE day=?").get(day) as {count:number}|undefined; if ((row?.count??0)>=limit) return false; this.db.prepare("INSERT INTO daily_call_usage(day,count) VALUES (?,1) ON CONFLICT(day) DO UPDATE SET count=count+1").run(day); return true; }); return tx(); }
+  getTranscript(callId: string): TranscriptTurn[] {
+    return this.db
+      .prepare("SELECT id,sequence,speaker,text,timestamp FROM transcript_turns WHERE call_id=? ORDER BY sequence")
+      .all(callId) as TranscriptTurn[];
+  }
+  saveApproval(approval: ApprovalRequest): void {
+    this.db
+      .prepare("INSERT INTO approval_requests (id,call_id,status,data_json,created_at,expires_at) VALUES (?,?,?,?,?,?)")
+      .run(
+        approval.id,
+        approval.callId,
+        approval.status,
+        JSON.stringify(approval),
+        approval.createdAt,
+        approval.expiresAt,
+      );
+  }
+  getPendingApproval(callId: string): ApprovalRequest | null {
+    const r = this.db
+      .prepare(
+        "SELECT data_json,status FROM approval_requests WHERE call_id=? AND status='PENDING' ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(callId) as { data_json: string; status: string } | undefined;
+    return r
+      ? { ...(JSON.parse(r.data_json) as ApprovalRequest), status: r.status as ApprovalRequest["status"] }
+      : null;
+  }
+  updateApproval(id: string, from: string, to: string): boolean {
+    const result = this.db
+      .prepare(
+        "UPDATE approval_requests SET status=?, data_json=json_set(data_json,'$.status',?) WHERE id=? AND status=?",
+      )
+      .run(to, to, id, from);
+    return result.changes === 1;
+  }
+  getApproval(id: string): ApprovalRequest | null {
+    const r = this.db.prepare("SELECT data_json,status FROM approval_requests WHERE id=?").get(id) as
+      | { data_json: string; status: string }
+      | undefined;
+    return r
+      ? { ...(JSON.parse(r.data_json) as ApprovalRequest), status: r.status as ApprovalRequest["status"] }
+      : null;
+  }
+  getApprovalExecution(approvalId: string): ApprovalExecutionRecord | null {
+    const row = this.db.prepare("SELECT * FROM approval_executions WHERE approval_id=?").get(approvalId) as
+      | ApprovalExecutionRow
+      | undefined;
+    return row ? approvalExecutionFromRow(row) : null;
+  }
+  reserveApprovalExecution(input: {
+    approvalId: string;
+    callId: string;
+    decision: "APPROVE" | "REJECT";
+    payloadFingerprint: string;
+    targetStatus: "APPROVED" | "REJECTED" | "REPLACED";
+    executionId: string;
+    now?: string;
+  }): { kind: "RESERVED" | "EXISTING"; execution: ApprovalExecutionRecord } {
+    return this.db.transaction((): { kind: "RESERVED" | "EXISTING"; execution: ApprovalExecutionRecord } => {
+      const now = input.now ?? new Date().toISOString();
+      const existing = this.getApprovalExecution(input.approvalId);
+      if (existing) return { kind: "EXISTING", execution: existing };
+      const approval = this.db
+        .prepare("SELECT status,call_id FROM approval_requests WHERE id=?")
+        .get(input.approvalId) as { status: string; call_id: string } | undefined;
+      if (!approval || approval.call_id !== input.callId || approval.status !== "PENDING")
+        throw new Error("APPROVAL_NOT_PENDING");
+      this.db
+        .prepare(
+          "INSERT INTO approval_executions (approval_id,call_id,decision,payload_fingerprint,target_status,execution_id,state,reserved_at) VALUES (?,?,?,?,?,?,'RESERVED',?)",
+        )
+        .run(
+          input.approvalId,
+          input.callId,
+          input.decision,
+          input.payloadFingerprint,
+          input.targetStatus,
+          input.executionId,
+          now,
+        );
+      return { kind: "RESERVED", execution: this.getApprovalExecution(input.approvalId)! };
+    })();
+  }
+  completeApprovalExecution(input: {
+    approvalId: string;
+    executionId: string;
+    targetStatus: "APPROVED" | "REJECTED" | "REPLACED";
+    now?: string;
+  }): boolean {
+    return this.db.transaction(() => {
+      const now = input.now ?? new Date().toISOString();
+      const execution = this.db
+        .prepare(
+          "UPDATE approval_executions SET state='SUCCEEDED',completed_at=?,error_code=NULL WHERE approval_id=? AND execution_id=? AND state='RESERVED'",
+        )
+        .run(now, input.approvalId, input.executionId);
+      if (execution.changes !== 1) return false;
+      const approval = this.db
+        .prepare(
+          "UPDATE approval_requests SET status=?,data_json=json_set(data_json,'$.status',?) WHERE id=? AND status='PENDING'",
+        )
+        .run(input.targetStatus, input.targetStatus, input.approvalId);
+      if (approval.changes !== 1) throw new Error("APPROVAL_FINALIZATION_FAILED");
+      return true;
+    })();
+  }
+  failApprovalExecution(input: { approvalId: string; executionId: string; errorCode: string; now?: string }): boolean {
+    return this.db.transaction(() => {
+      const now = input.now ?? new Date().toISOString();
+      const execution = this.db
+        .prepare(
+          "UPDATE approval_executions SET state='FAILED',completed_at=?,error_code=? WHERE approval_id=? AND execution_id=? AND state='RESERVED'",
+        )
+        .run(now, input.errorCode, input.approvalId, input.executionId);
+      if (execution.changes !== 1) return false;
+      const approval = this.db
+        .prepare(
+          "UPDATE approval_requests SET status='EXECUTION_FAILED',data_json=json_set(data_json,'$.status','EXECUTION_FAILED') WHERE id=? AND status='PENDING'",
+        )
+        .run(input.approvalId);
+      if (approval.changes !== 1) throw new Error("APPROVAL_FAILURE_FINALIZATION_FAILED");
+      return true;
+    })();
+  }
+  saveOutcome(callId: string, report: OutcomeReport, now = new Date().toISOString()): boolean {
+    return (
+      this.db
+        .prepare("INSERT OR IGNORE INTO outcome_reports (call_id,report_json,created_at) VALUES (?,?,?)")
+        .run(callId, JSON.stringify(report), now).changes === 1
+    );
+  }
+  replaceOutcome(callId: string, report: OutcomeReport): boolean {
+    return (
+      this.db.prepare("UPDATE outcome_reports SET report_json=? WHERE call_id=?").run(JSON.stringify(report), callId)
+        .changes === 1
+    );
+  }
+  getOutcome(callId: string): OutcomeReport | null {
+    const r = this.db.prepare("SELECT report_json FROM outcome_reports WHERE call_id=?").get(callId) as
+      | { report_json: string }
+      | undefined;
+    return r ? (JSON.parse(r.report_json) as OutcomeReport) : null;
+  }
+  listTerminalCallsWithoutOutcome(): CallRow[] {
+    return this.db
+      .prepare(
+        `SELECT calls.* FROM calls LEFT JOIN outcome_reports ON outcome_reports.call_id=calls.id WHERE calls.state IN ('COMPLETED','FAILED') AND outcome_reports.call_id IS NULL ORDER BY calls.ended_at,calls.id`,
+      )
+      .all() as CallRow[];
+  }
+  listEvents(
+    callId: string,
+    after = 0,
+  ): Array<{ sequence: number; type: string; payload: unknown; timestamp: string }> {
+    return (
+      this.db
+        .prepare(
+          "SELECT sequence,type,payload_json,timestamp FROM events WHERE call_id=? AND sequence>? ORDER BY sequence",
+        )
+        .all(callId, after) as Array<{ sequence: number; type: string; payload_json: string; timestamp: string }>
+    ).map((r) => ({
+      sequence: r.sequence,
+      type: r.type,
+      payload: JSON.parse(r.payload_json) as unknown,
+      timestamp: r.timestamp,
+    }));
+  }
+  incrementDailyUsage(day: string, limit: number): boolean {
+    const tx = this.db.transaction(() => {
+      const row = this.db.prepare("SELECT count FROM daily_call_usage WHERE day=?").get(day) as
+        | { count: number }
+        | undefined;
+      if ((row?.count ?? 0) >= limit) return false;
+      this.db
+        .prepare("INSERT INTO daily_call_usage(day,count) VALUES (?,1) ON CONFLICT(day) DO UPDATE SET count=count+1")
+        .run(day);
+      return true;
+    });
+    return tx();
+  }
   deleteExpired(retentionDays: number): number {
     const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
     return this.db.transaction(() => {
-      const expired = this.db.prepare(`SELECT id FROM cases
+      const expired = this.db
+        .prepare(
+          `SELECT id FROM cases
       WHERE updated_at < ?
         AND status IN ('COMPLETED','FAILED','CANCELLED')
         AND NOT EXISTS (
@@ -2027,7 +3192,9 @@ export class LiaisonDatabase {
           WHERE support_threads.current_case_id=cases.id
             AND support_threads.is_active=1
             AND support_threads.state NOT IN ('COMPLETED','FAILED','CANCELLED')
-        )`).all(cutoff) as Array<{id:string}>;
+        )`,
+        )
+        .all(cutoff) as Array<{ id: string }>;
       for (const item of expired) this.deleteCase(item.id);
       return expired.length;
     })();

@@ -21,9 +21,11 @@ const brief = await service.plan("release-smoke", "+13045550101", {
 });
 const usage = service.drainUsageRecords()[0];
 
-process.stdout.write(`${JSON.stringify({
-  ok: Boolean(brief.title && brief.strategySteps.length),
-  modelRequestId: Boolean(usage?.requestId),
-  responseId: Boolean(usage?.responseId),
-  tokens: usage?.totalTokens ?? 0,
-})}\n`);
+process.stdout.write(
+  `${JSON.stringify({
+    ok: Boolean(brief.title && brief.strategySteps.length),
+    modelRequestId: Boolean(usage?.requestId),
+    responseId: Boolean(usage?.responseId),
+    tokens: usage?.totalTokens ?? 0,
+  })}\n`,
+);

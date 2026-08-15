@@ -22,27 +22,30 @@ afterEach(async () => {
 });
 
 async function app(overrides: Partial<Config> = {}): Promise<AppContext> {
-  context = await buildApp({
-    NODE_ENV: "test",
-    LLM_MODE: "mock",
-    TELEPHONY_MODE: "simulator",
-    ALLOW_REAL_CALLS: false,
-    DATABASE_PATH: ":memory:",
-    PUBLIC_BASE_URL: publicBaseUrl,
-    PUBLIC_WSS_URL: "wss://liaison.example",
-    APP_ACCESS_KEY: "",
-    SESSION_SECRET: "route-test-session-secret",
-    CALL_TOKEN_SECRET: "route-test-call-secret",
-    ACTION_LINK_SECRET: "route-test-action-secret",
-    MESSAGING_MODE: "twilio_sms",
-    ALLOW_REAL_MESSAGING: true,
-    TWILIO_ACCOUNT_SID: accountSid,
-    TWILIO_AUTH_TOKEN: authToken,
-    TWILIO_MESSAGING_SERVICE_SID: "",
-    TWILIO_SMS_FROM_NUMBER: sender,
-    OWNER_PHONE_E164: owner,
-    ...overrides,
-  }, { serveClient: false, databasePath: ":memory:" });
+  context = await buildApp(
+    {
+      NODE_ENV: "test",
+      LLM_MODE: "mock",
+      TELEPHONY_MODE: "simulator",
+      ALLOW_REAL_CALLS: false,
+      DATABASE_PATH: ":memory:",
+      PUBLIC_BASE_URL: publicBaseUrl,
+      PUBLIC_WSS_URL: "wss://liaison.example",
+      APP_ACCESS_KEY: "",
+      SESSION_SECRET: "route-test-session-secret",
+      CALL_TOKEN_SECRET: "route-test-call-secret",
+      ACTION_LINK_SECRET: "route-test-action-secret",
+      MESSAGING_MODE: "twilio_sms",
+      ALLOW_REAL_MESSAGING: true,
+      TWILIO_ACCOUNT_SID: accountSid,
+      TWILIO_AUTH_TOKEN: authToken,
+      TWILIO_MESSAGING_SERVICE_SID: "",
+      TWILIO_SMS_FROM_NUMBER: sender,
+      OWNER_PHONE_E164: owner,
+      ...overrides,
+    },
+    { serveClient: false, databasePath: ":memory:" },
+  );
   await context.app.ready();
   await context.messaging.stop();
   return context;
@@ -79,16 +82,22 @@ function statusForm(overrides: Partial<TwilioForm> = {}): TwilioForm {
   };
 }
 
-async function signedPost(path: string, form: TwilioForm, options: {
-  signature?: string;
-  signatureUrl?: string;
-  signatureForm?: TwilioForm;
-} = {}) {
-  const signature = options.signature ?? twilio.getExpectedTwilioSignature(
-    authToken,
-    options.signatureUrl ?? `${publicBaseUrl}${path}`,
-    options.signatureForm ?? form,
-  );
+async function signedPost(
+  path: string,
+  form: TwilioForm,
+  options: {
+    signature?: string;
+    signatureUrl?: string;
+    signatureForm?: TwilioForm;
+  } = {},
+) {
+  const signature =
+    options.signature ??
+    twilio.getExpectedTwilioSignature(
+      authToken,
+      options.signatureUrl ?? `${publicBaseUrl}${path}`,
+      options.signatureForm ?? form,
+    );
   return context!.app.inject({
     method: "POST",
     url: path,
@@ -110,12 +119,22 @@ describe("Twilio messaging webhook routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("text/xml");
     expect(response.body).toBe('<?xml version="1.0" encoding="UTF-8"?><Response/>');
-    expect((context!.database.db.prepare("SELECT COUNT(*) AS count FROM inbound_messages WHERE provider_message_id='SM-exact-url'").get() as {count:number}).count).toBe(1);
+    expect(
+      (
+        context!.database.db
+          .prepare("SELECT COUNT(*) AS count FROM inbound_messages WHERE provider_message_id='SM-exact-url'")
+          .get() as { count: number }
+      ).count,
+    ).toBe(1);
 
-    const changedUnsignedField = await signedPost(inboundPath, { ...form, FutureTwilioField: "tampered" }, {
-      signatureUrl: `${publicBaseUrl}${inboundPath}`,
-      signatureForm: form,
-    });
+    const changedUnsignedField = await signedPost(
+      inboundPath,
+      { ...form, FutureTwilioField: "tampered" },
+      {
+        signatureUrl: `${publicBaseUrl}${inboundPath}`,
+        signatureForm: form,
+      },
+    );
     expect(changedUnsignedField.statusCode).toBe(403);
   });
 
@@ -123,8 +142,16 @@ describe("Twilio messaging webhook routes", () => {
     await app();
     const response = await signedPost(inboundPath, inboundForm(), { signature: "invalid-signature" });
     expect(response.statusCode).toBe(403);
-    expect((context!.database.db.prepare("SELECT COUNT(*) AS count FROM inbound_messages").get() as {count:number}).count).toBe(0);
-    expect((context!.database.db.prepare("SELECT COUNT(*) AS count FROM provider_security_events").get() as {count:number}).count).toBe(0);
+    expect(
+      (context!.database.db.prepare("SELECT COUNT(*) AS count FROM inbound_messages").get() as { count: number }).count,
+    ).toBe(0);
+    expect(
+      (
+        context!.database.db.prepare("SELECT COUNT(*) AS count FROM provider_security_events").get() as {
+          count: number;
+        }
+      ).count,
+    ).toBe(0);
   });
 
   it.each([
@@ -144,7 +171,9 @@ describe("Twilio messaging webhook routes", () => {
     await app();
     const response = await signedPost(inboundPath, inboundForm({ MessageSid: sid, SmsSid: sid, ...changes }));
     expect(response.statusCode).toBe(403);
-    expect((context!.database.db.prepare("SELECT COUNT(*) AS count FROM inbound_messages").get() as {count:number}).count).toBe(0);
+    expect(
+      (context!.database.db.prepare("SELECT COUNT(*) AS count FROM inbound_messages").get() as { count: number }).count,
+    ).toBe(0);
     expect(context!.database.listProviderSecurityEvents()).toEqual([
       expect.objectContaining({ providerMessageId: sid, reasonCode: reason, callId: null }),
     ]);
@@ -156,9 +185,17 @@ describe("Twilio messaging webhook routes", () => {
     const response = await signedPost(inboundPath, inboundForm({ MessageSid: sid, SmsSid: sid, From: "+13045550888" }));
     expect(response.statusCode).toBe(200);
     expect(response.body).toBe('<?xml version="1.0" encoding="UTF-8"?><Response/>');
-    expect((context!.database.db.prepare("SELECT COUNT(*) AS count FROM inbound_messages").get() as {count:number}).count).toBe(0);
-    expect((context!.database.db.prepare("SELECT COUNT(*) AS count FROM messaging_work_items").get() as {count:number}).count).toBe(0);
-    expect((context!.database.db.prepare("SELECT COUNT(*) AS count FROM outbound_messages").get() as {count:number}).count).toBe(0);
+    expect(
+      (context!.database.db.prepare("SELECT COUNT(*) AS count FROM inbound_messages").get() as { count: number }).count,
+    ).toBe(0);
+    expect(
+      (context!.database.db.prepare("SELECT COUNT(*) AS count FROM messaging_work_items").get() as { count: number })
+        .count,
+    ).toBe(0);
+    expect(
+      (context!.database.db.prepare("SELECT COUNT(*) AS count FROM outbound_messages").get() as { count: number })
+        .count,
+    ).toBe(0);
     expect(context!.database.listProviderSecurityEvents()[0]).toMatchObject({
       providerMessageId: sid,
       reasonCode: "UNAUTHORIZED_SENDER",
@@ -171,8 +208,17 @@ describe("Twilio messaging webhook routes", () => {
     const form = inboundForm({ MessageSid: "SM-duplicate", SmsSid: "SM-duplicate" });
     expect((await signedPost(inboundPath, form)).statusCode).toBe(200);
     expect((await signedPost(inboundPath, form)).statusCode).toBe(200);
-    expect((context!.database.db.prepare("SELECT COUNT(*) AS count FROM inbound_messages WHERE provider_message_id='SM-duplicate'").get() as {count:number}).count).toBe(1);
-    expect((context!.database.db.prepare("SELECT COUNT(*) AS count FROM messaging_work_items").get() as {count:number}).count).toBe(1);
+    expect(
+      (
+        context!.database.db
+          .prepare("SELECT COUNT(*) AS count FROM inbound_messages WHERE provider_message_id='SM-duplicate'")
+          .get() as { count: number }
+      ).count,
+    ).toBe(1);
+    expect(
+      (context!.database.db.prepare("SELECT COUNT(*) AS count FROM messaging_work_items").get() as { count: number })
+        .count,
+    ).toBe(1);
   });
 
   it("does not replay an old opt-state command when the same MessageSid is redelivered", async () => {
@@ -203,9 +249,19 @@ describe("Twilio messaging webhook routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(context!.database.getInboundMessage((context!.database.db.prepare("SELECT id FROM inbound_messages WHERE provider_message_id='SM-media'").get() as {id:string}).id))
-      .toMatchObject({ errorCode: "MMS_UNSUPPORTED", redactedBody: "Here is a screenshot" });
-    expect((context!.database.db.prepare("SELECT COUNT(*) AS count FROM outbound_messages").get() as {count:number}).count).toBe(0);
+    expect(
+      context!.database.getInboundMessage(
+        (
+          context!.database.db
+            .prepare("SELECT id FROM inbound_messages WHERE provider_message_id='SM-media'")
+            .get() as { id: string }
+        ).id,
+      ),
+    ).toMatchObject({ errorCode: "MMS_UNSUPPORTED", redactedBody: "Here is a screenshot" });
+    expect(
+      (context!.database.db.prepare("SELECT COUNT(*) AS count FROM outbound_messages").get() as { count: number })
+        .count,
+    ).toBe(0);
   });
 
   it("applies STOP synchronously, cancels queued sends, and creates no opt-out reply", async () => {
@@ -221,11 +277,14 @@ describe("Twilio messaging webhook routes", () => {
       segmentEstimate: 1,
       idempotencyKey: "queued-before-stop",
     });
-    const response = await signedPost(inboundPath, inboundForm({
-      MessageSid: "SM-stop",
-      SmsSid: "SM-stop",
-      OptOutType: "STOP",
-    }));
+    const response = await signedPost(
+      inboundPath,
+      inboundForm({
+        MessageSid: "SM-stop",
+        SmsSid: "SM-stop",
+        OptOutType: "STOP",
+      }),
+    );
     await context!.messaging.flush();
 
     expect(response.statusCode).toBe(200);
@@ -236,7 +295,10 @@ describe("Twilio messaging webhook routes", () => {
       errorCode: "OWNER_OPTED_OUT",
       providerMessageId: null,
     });
-    expect((context!.database.db.prepare("SELECT COUNT(*) AS count FROM outbound_messages").get() as {count:number}).count).toBe(1);
+    expect(
+      (context!.database.db.prepare("SELECT COUNT(*) AS count FROM outbound_messages").get() as { count: number })
+        .count,
+    ).toBe(1);
   });
 
   it("validates status callbacks and reduces out-of-order delivery without regression", async () => {
@@ -252,16 +314,29 @@ describe("Twilio messaging webhook routes", () => {
       segmentEstimate: 1,
       idempotencyKey: "outbound-status",
     });
-    expect(context!.database.claimOutboundMessages({ workerId: "test-seed", now: new Date().toISOString(), leaseSeconds: 60, limit: 1 })).toHaveLength(1);
-    expect(context!.database.markOutboundSent({
-      id: "outbound-status",
-      workerId: "test-seed",
-      providerMessageId: "SM99999999999999999999999999999999",
-      deliveryState: "QUEUED",
-    })).toBe(true);
+    expect(
+      context!.database.claimOutboundMessages({
+        workerId: "test-seed",
+        now: new Date().toISOString(),
+        leaseSeconds: 60,
+        limit: 1,
+      }),
+    ).toHaveLength(1);
+    expect(
+      context!.database.markOutboundSent({
+        id: "outbound-status",
+        workerId: "test-seed",
+        providerMessageId: "SM99999999999999999999999999999999",
+        deliveryState: "QUEUED",
+      }),
+    ).toBe(true);
 
-    expect((await signedPost(statusPath, statusForm({ MessageStatus: "delivered", SmsStatus: "delivered" }))).statusCode).toBe(204);
-    expect((await signedPost(statusPath, statusForm({ MessageStatus: "sent", SmsStatus: "sent" }))).statusCode).toBe(204);
+    expect(
+      (await signedPost(statusPath, statusForm({ MessageStatus: "delivered", SmsStatus: "delivered" }))).statusCode,
+    ).toBe(204);
+    expect((await signedPost(statusPath, statusForm({ MessageStatus: "sent", SmsStatus: "sent" }))).statusCode).toBe(
+      204,
+    );
     expect(context!.database.getOutboundMessage("outbound-status")).toMatchObject({
       deliveryState: "DELIVERED",
       errorCode: null,
@@ -269,7 +344,9 @@ describe("Twilio messaging webhook routes", () => {
     });
     expect(context!.database.listMessageDeliveryEvents("outbound-status")).toHaveLength(2);
 
-    const invalid = await signedPost(statusPath, statusForm({ MessageStatus: "failed" }), { signature: "invalid-signature" });
+    const invalid = await signedPost(statusPath, statusForm({ MessageStatus: "failed" }), {
+      signature: "invalid-signature",
+    });
     expect(invalid.statusCode).toBe(403);
     expect(context!.database.listMessageDeliveryEvents("outbound-status")).toHaveLength(2);
   });

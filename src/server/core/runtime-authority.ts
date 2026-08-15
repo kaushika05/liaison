@@ -42,7 +42,11 @@ export function conditionalSubjectForApproval(approval: ApprovalRequest): Condit
   if (approval.category === "FINANCIAL") return financialSubject(text);
   if (approval.category === "CANCELLATION") return "CANCELLATION";
   if (approval.category === "SCHEDULING") return "APPOINTMENT";
-  if (approval.category === "ACCOUNT_CHANGE" || /\b(?:plan change|change (?:the |your )?plan|upgrade|downgrade)\b/i.test(text)) return "PLAN_CHANGE";
+  if (
+    approval.category === "ACCOUNT_CHANGE" ||
+    /\b(?:plan change|change (?:the |your )?plan|upgrade|downgrade)\b/i.test(text)
+  )
+    return "PLAN_CHANGE";
   if (approval.category === "ALTERNATIVE_OUTCOME") {
     const monetary = financialSubject(text);
     return monetary === "OTHER" ? "OTHER" : monetary;
@@ -51,7 +55,7 @@ export function conditionalSubjectForApproval(approval: ApprovalRequest): Condit
 }
 
 function conditionObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 /**

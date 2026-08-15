@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../../src/server/app.js";
-import {
-  attentionRequestSchema,
-  commitmentSchema,
-  executionPlanSchema,
-} from "../../src/shared/protocol.js";
+import { attentionRequestSchema, commitmentSchema, executionPlanSchema } from "../../src/shared/protocol.js";
 
 let context: AppContext | undefined;
 
@@ -15,7 +11,13 @@ afterEach(async () => {
 
 async function signedIn(): Promise<{ cookie: string }> {
   context = await buildApp(
-    { NODE_ENV: "test", APP_ACCESS_KEY: "", SESSION_SECRET: "protocol-session-secret-long-enough", CALL_TOKEN_SECRET: "protocol-call-secret-long-enough", ACTION_LINK_SECRET: "protocol-action-secret-long-enough" },
+    {
+      NODE_ENV: "test",
+      APP_ACCESS_KEY: "",
+      SESSION_SECRET: "protocol-session-secret-long-enough",
+      CALL_TOKEN_SECRET: "protocol-call-secret-long-enough",
+      ACTION_LINK_SECRET: "protocol-action-secret-long-enough",
+    },
     { serveClient: false, databasePath: ":memory:" },
   );
   const login = await context.app.inject({ method: "POST", url: "/api/auth/login", payload: { accessKey: "" } });
@@ -40,12 +42,21 @@ const intake = {
 describe("Universal Support Protocol v1 surface", () => {
   it("returns an ExecutionPlan that validates against the published schema", async () => {
     const { cookie } = await signedIn();
-    const created = await context!.app.inject({ method: "POST", url: "/api/cases", headers: { cookie }, payload: intake });
+    const created = await context!.app.inject({
+      method: "POST",
+      url: "/api/cases",
+      headers: { cookie },
+      payload: intake,
+    });
     expect(created.statusCode).toBe(201);
     const caseId = created.json().id as string;
     await context!.app.inject({ method: "POST", url: `/api/cases/${caseId}/plan`, headers: { cookie } });
 
-    const response = await context!.app.inject({ method: "GET", url: `/api/cases/${caseId}/execution-plan`, headers: { cookie } });
+    const response = await context!.app.inject({
+      method: "GET",
+      url: `/api/cases/${caseId}/execution-plan`,
+      headers: { cookie },
+    });
     expect(response.statusCode).toBe(200);
 
     // The route is the contract boundary: whatever it returns must parse as an ExecutionPlan.
@@ -65,18 +76,36 @@ describe("Universal Support Protocol v1 surface", () => {
 
   it("marks the plan approved and keeps the id stable across plan versions", async () => {
     const { cookie } = await signedIn();
-    const created = await context!.app.inject({ method: "POST", url: "/api/cases", headers: { cookie }, payload: intake });
+    const created = await context!.app.inject({
+      method: "POST",
+      url: "/api/cases",
+      headers: { cookie },
+      payload: intake,
+    });
     const caseId = created.json().id as string;
     await context!.app.inject({ method: "POST", url: `/api/cases/${caseId}/plan`, headers: { cookie } });
     await context!.app.inject({ method: "POST", url: `/api/cases/${caseId}/plan/approve`, headers: { cookie } });
 
-    const approved = executionPlanSchema.parse((await context!.app.inject({ method: "GET", url: `/api/cases/${caseId}/execution-plan`, headers: { cookie } })).json());
+    const approved = executionPlanSchema.parse(
+      (
+        await context!.app.inject({ method: "GET", url: `/api/cases/${caseId}/execution-plan`, headers: { cookie } })
+      ).json(),
+    );
     expect(approved.approvedAt).toBeTruthy();
 
     // Editing the plan produces a new version, a new plan id, and drops the approval.
-    const edited = await context!.app.inject({ method: "PATCH", url: `/api/cases/${caseId}/plan`, headers: { cookie }, payload: { ...approved.callBrief, desiredOutcome: "Restore the prior rate only" } });
+    const edited = await context!.app.inject({
+      method: "PATCH",
+      url: `/api/cases/${caseId}/plan`,
+      headers: { cookie },
+      payload: { ...approved.callBrief, desiredOutcome: "Restore the prior rate only" },
+    });
     expect(edited.statusCode).toBe(200);
-    const revised = executionPlanSchema.parse((await context!.app.inject({ method: "GET", url: `/api/cases/${caseId}/execution-plan`, headers: { cookie } })).json());
+    const revised = executionPlanSchema.parse(
+      (
+        await context!.app.inject({ method: "GET", url: `/api/cases/${caseId}/execution-plan`, headers: { cookie } })
+      ).json(),
+    );
     expect(revised.version).toBe(2);
     expect(revised.planId).toBe(`plan-${caseId}-v2`);
     expect(revised.approvedAt).toBeUndefined();
@@ -84,46 +113,100 @@ describe("Universal Support Protocol v1 surface", () => {
 
   it("publishes only conditional rules bound to the current plan version", async () => {
     const { cookie } = await signedIn();
-    const created = await context!.app.inject({ method: "POST", url: "/api/cases", headers: { cookie }, payload: intake });
+    const created = await context!.app.inject({
+      method: "POST",
+      url: "/api/cases",
+      headers: { cookie },
+      payload: intake,
+    });
     const caseId = created.json().id as string;
     await context!.app.inject({ method: "POST", url: `/api/cases/${caseId}/plan`, headers: { cookie } });
-    const plan = executionPlanSchema.parse((await context!.app.inject({ method: "GET", url: `/api/cases/${caseId}/execution-plan`, headers: { cookie } })).json());
+    const plan = executionPlanSchema.parse(
+      (
+        await context!.app.inject({ method: "GET", url: `/api/cases/${caseId}/execution-plan`, headers: { cookie } })
+      ).json(),
+    );
     for (const rule of plan.conditionalAuthorityRules) {
-      expect(["REFUND", "CREDIT", "FEE", "CHARGE", "PLAN_CHANGE", "CANCELLATION", "APPOINTMENT", "OTHER"]).toContain(rule.subject);
+      expect(["REFUND", "CREDIT", "FEE", "CHARGE", "PLAN_CHANGE", "CANCELLATION", "APPOINTMENT", "OTHER"]).toContain(
+        rule.subject,
+      );
     }
   });
 
   it("rejects unauthenticated protocol requests and unknown identifiers", async () => {
     const { cookie } = await signedIn();
-    const anonymous = await context!.app.inject({ method: "GET", url: "/api/cases/00000000-0000-4000-8000-000000000000/execution-plan" });
+    const anonymous = await context!.app.inject({
+      method: "GET",
+      url: "/api/cases/00000000-0000-4000-8000-000000000000/execution-plan",
+    });
     expect(anonymous.statusCode).toBe(401);
 
-    const missingCase = await context!.app.inject({ method: "GET", url: "/api/cases/00000000-0000-4000-8000-000000000000/execution-plan", headers: { cookie } });
+    const missingCase = await context!.app.inject({
+      method: "GET",
+      url: "/api/cases/00000000-0000-4000-8000-000000000000/execution-plan",
+      headers: { cookie },
+    });
     expect(missingCase.statusCode).toBe(404);
 
-    const missingAttention = await context!.app.inject({ method: "GET", url: "/api/attention/00000000-0000-4000-8000-000000000000", headers: { cookie } });
+    const missingAttention = await context!.app.inject({
+      method: "GET",
+      url: "/api/attention/00000000-0000-4000-8000-000000000000",
+      headers: { cookie },
+    });
     expect(missingAttention.statusCode).toBe(404);
   });
 
   it("returns a plan-not-found error before a brief exists", async () => {
     const { cookie } = await signedIn();
-    const created = await context!.app.inject({ method: "POST", url: "/api/cases", headers: { cookie }, payload: intake });
+    const created = await context!.app.inject({
+      method: "POST",
+      url: "/api/cases",
+      headers: { cookie },
+      payload: intake,
+    });
     const caseId = created.json().id as string;
-    const response = await context!.app.inject({ method: "GET", url: `/api/cases/${caseId}/execution-plan`, headers: { cookie } });
+    const response = await context!.app.inject({
+      method: "GET",
+      url: `/api/cases/${caseId}/execution-plan`,
+      headers: { cookie },
+    });
     expect(response.statusCode).toBe(404);
     expect(response.json().error.code).toBe("PLAN_NOT_FOUND");
   });
 
   it("projects attention requests and commitments through the published schemas", async () => {
     const { cookie } = await signedIn();
-    const created = await context!.app.inject({ method: "POST", url: "/api/cases", headers: { cookie }, payload: intake });
+    const created = await context!.app.inject({
+      method: "POST",
+      url: "/api/cases",
+      headers: { cookie },
+      payload: intake,
+    });
     const caseId = created.json().id as string;
-    const thread = context!.database.getOrCreateActiveSupportThread({ id: crypto.randomUUID(), principalId: "owner", state: "IDLE", autonomyMode: "COPILOT", messagingOptState: "OPTED_IN", draft: null });
+    const thread = context!.database.getOrCreateActiveSupportThread({
+      id: crypto.randomUUID(),
+      principalId: "owner",
+      state: "IDLE",
+      autonomyMode: "COPILOT",
+      messagingOptState: "OPTED_IN",
+      draft: null,
+    });
     context!.database.updateSupportThread(thread.id, { currentCaseId: caseId });
-    context!.database.createCall({ id: "11111111-1111-4111-8111-111111111111", caseId, mode: "SIMULATOR", scenarioId: null, state: "ON_HOLD", activity: "On hold", objective: "Wait" });
+    context!.database.createCall({
+      id: "11111111-1111-4111-8111-111111111111",
+      caseId,
+      mode: "SIMULATOR",
+      scenarioId: null,
+      state: "ON_HOLD",
+      activity: "On hold",
+      objective: "Wait",
+    });
 
     const attention = context!.database.createAttentionRequest({
-      id: crypto.randomUUID(), threadId: thread.id, caseId, callId: "11111111-1111-4111-8111-111111111111",
+      id: crypto.randomUUID(),
+      threadId: thread.id,
+      caseId,
+      callId: "11111111-1111-4111-8111-111111111111",
       tier: "LOW_CONSEQUENCE",
       question: "DECISION NEEDED\nThe call is on hold.\nA - Continue waiting",
       choices: [
@@ -133,7 +216,11 @@ describe("Universal Support Protocol v1 surface", () => {
       expiresAt: new Date(Date.now() + 120_000).toISOString(),
     });
 
-    const response = await context!.app.inject({ method: "GET", url: `/api/attention/${attention.request.id}`, headers: { cookie } });
+    const response = await context!.app.inject({
+      method: "GET",
+      url: `/api/attention/${attention.request.id}`,
+      headers: { cookie },
+    });
     expect(response.statusCode).toBe(200);
     const projected = attentionRequestSchema.parse(response.json());
     expect(projected.protocolVersion).toBe(1);
@@ -145,11 +232,20 @@ describe("Universal Support Protocol v1 surface", () => {
     expect(Date.parse(projected.expiresAt)).toBeGreaterThan(Date.parse(projected.createdAt));
 
     context!.database.createCommitment({
-      id: "commitment-1", threadId: thread.id, caseId, callId: "11111111-1111-4111-8111-111111111111",
-      party: "COMPANY", status: "CONFIRMED", description: "A $35 account credit will be applied.",
+      id: "commitment-1",
+      threadId: thread.id,
+      caseId,
+      callId: "11111111-1111-4111-8111-111111111111",
+      party: "COMPANY",
+      status: "CONFIRMED",
+      description: "A $35 account credit will be applied.",
       evidence: [{ turnId: "turn-1", exactQuote: "I approved a full $35 account credit" }],
     });
-    const commitments = await context!.app.inject({ method: "GET", url: `/api/cases/${caseId}/commitments`, headers: { cookie } });
+    const commitments = await context!.app.inject({
+      method: "GET",
+      url: `/api/cases/${caseId}/commitments`,
+      headers: { cookie },
+    });
     expect(commitments.statusCode).toBe(200);
     const parsed = (commitments.json().commitments as unknown[]).map((item) => commitmentSchema.parse(item));
     expect(parsed).toHaveLength(1);
