@@ -4,6 +4,26 @@ The Liaison Universal Support Protocol is this project's open, versioned data co
 
 This directory currently contains protocol version 1. It is a project protocol, not an industry standard.
 
+## Implementation status
+
+Be aware of which schemas the reference implementation actually runs on:
+
+| Schema | Status in this implementation |
+| --- | --- |
+| `authority-envelope` | **Enforced.** Parsed and applied on every call decision. |
+| `outcome-report` | **Enforced.** Validated against transcript evidence before storage. |
+| `support-intent` | Proposed contract. Not used at runtime. |
+| `execution-plan` | Proposed contract. Not used at runtime. |
+| `attention-request` | Proposed contract. The runtime uses the equivalent database record. |
+| `commitment` | Proposed contract. The runtime uses the equivalent database record. |
+| `disclosure-event` | Proposed contract. No code path emits one today. |
+
+The proposed contracts exist so a second implementation has something concrete to build against, and
+they are versioned, tested, and schema-generated for that reason. They are not a description of what
+the reference implementation persists. Attention tiers, semantic call events, conditional authority
+rules, autonomy modes, and support-thread states — all also defined in `src/shared/protocol.ts` — are
+enforced at runtime.
+
 ## Version 1
 
 The JSON Schema files in [`v1/`](v1/) cover:

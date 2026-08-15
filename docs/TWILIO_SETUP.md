@@ -90,7 +90,7 @@ ALLOW_REAL_CALLS=false
 
 Use either the Messaging Service SID or the direct SMS sender. `TWILIO_FROM_NUMBER` remains a backward-compatible voice alias, but new deployments should use `TWILIO_VOICE_FROM_NUMBER`.
 
-`OWNER_PHONE_E164` is the only SMS principal and must be an exact E.164 value. Messages from other numbers are rejected; `UNAUTHORIZED_SENDER_RESPONSE=false` keeps the default response silent to avoid confirming that an instance exists. The browser remains protected by `APP_ACCESS_KEY` and signed sessions.
+`OWNER_PHONE_E164` is the only SMS principal and must be an exact E.164 value. Messages from other numbers are rejected and answered with empty TwiML, so the sender learns nothing about whether an instance exists. There is no setting that enables a reply to an unauthorized sender; the rejection is recorded as a provider security event and surfaced as a count in the messaging setup panel. The browser remains protected by `APP_ACCESS_KEY` and signed sessions.
 
 Run:
 

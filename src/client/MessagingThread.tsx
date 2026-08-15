@@ -413,7 +413,13 @@ function CasePanel({ snapshot, onOpenCase, onOpenCall, onMode, onDeleteCase, onA
   </>;
 }
 
-function SetupPanel({ configuration, failedDeliveries, deadLetterWork }: { configuration: ThreadSnapshot["configuration"]; failedDeliveries: number; deadLetterWork: number }) {
+function SetupPanel({ configuration, failedDeliveries, deadLetterWork, rejectedProviderRequests, estimatedMessagingSpendUsd }: {
+  configuration: ThreadSnapshot["configuration"];
+  failedDeliveries: number;
+  deadLetterWork: number;
+  rejectedProviderRequests: number;
+  estimatedMessagingSpendUsd: number;
+}) {
   const smsReady = configuration.messagingMode === "twilio_sms" && configuration.messagingConfigured && configuration.allowRealMessaging && configuration.ownerConfigured;
   return <Panel title="Messaging setup" icon={smsReady ? <Wifi aria-hidden="true" /> : <Settings2 aria-hidden="true" />}>
     <div className="setup-status"><Badge tone={smsReady ? "good" : "neutral"}>{smsReady ? "SMS enabled" : "Secure web enabled"}</Badge><Badge tone={configuration.messagingConfigured ? "good" : "warn"}>Provider {configuration.messagingConfigured ? "configured" : "not configured"}</Badge></div>
@@ -425,7 +431,10 @@ function SetupPanel({ configuration, failedDeliveries, deadLetterWork }: { confi
       <div><dt>Update detail</dt><dd>{labelize(configuration.messagingDetail)}</dd></div>
       <div><dt>Failed deliveries</dt><dd>{failedDeliveries}</dd></div>
       <div><dt>Dead-letter work</dt><dd>{deadLetterWork}</dd></div>
+      <div><dt>Rejected provider requests</dt><dd>{rejectedProviderRequests}</dd></div>
+      <div><dt>Estimated SMS spend</dt><dd>{configuration.estimatedSmsCostPerSegmentUsd > 0 ? `$${estimatedMessagingSpendUsd.toFixed(4)}` : "Rate not configured"}</dd></div>
     </dl>
+    {rejectedProviderRequests > 0 && <p className="message-warning"><ShieldCheck aria-hidden="true" /> {rejectedProviderRequests} inbound provider {rejectedProviderRequests === 1 ? "request was" : "requests were"} rejected for account, destination, or sender mismatch. This is expected if your webhook URL is being probed.</p>}
     <details className="webhook-details"><summary>Webhook endpoints</summary><dl>
       <div><dt>Inbound messages</dt><dd>{configuration.inboundMessagingWebhookUrl ? <code>{configuration.inboundMessagingWebhookUrl}</code> : "Not published"}</dd></div>
       <div><dt>Delivery status</dt><dd>{configuration.messagingStatusWebhookUrl ? <code>{configuration.messagingStatusWebhookUrl}</code> : "Not published"}</dd></div>
@@ -505,11 +514,14 @@ export function MessagingThread({ onOpenCase, onOpenCall, setGlobalError }: Mess
   useEffect(() => {
     const controller = new AbortController();
     let timer: number | undefined;
+    // `setTimeout` expects a void callback, so the promise is explicitly discarded. `loadThread`
+    // handles its own errors, and swallowing here silently would hide that if it ever changed.
+    const schedule = () => { timer = window.setTimeout(() => void poll(), isActive ? 1000 : 4000); };
     const poll = async () => {
       await loadThread(controller.signal);
-      if (!controller.signal.aborted) timer = window.setTimeout(poll, isActive ? 1000 : 4000);
+      if (!controller.signal.aborted) schedule();
     };
-    timer = window.setTimeout(poll, isActive ? 1000 : 4000);
+    schedule();
     return () => {
       controller.abort();
       if (timer !== undefined) window.clearTimeout(timer);
@@ -657,7 +669,7 @@ export function MessagingThread({ onOpenCase, onOpenCall, setGlobalError }: Mess
       <aside className="message-sidebar" aria-label="Case and messaging details">
         <CasePanel snapshot={snapshot} onOpenCase={onOpenCase} onOpenCall={onOpenCall} onMode={(mode) => void sendText(`MODE ${mode}`)} onDeleteCase={deleteCase} onAddDisclosure={addDisclosure} />
         <CommitmentsPanel commitments={snapshot.commitments} />
-        <SetupPanel configuration={snapshot.configuration} failedDeliveries={snapshot.failedDeliveries} deadLetterWork={snapshot.deadLetterWork} />
+        <SetupPanel configuration={snapshot.configuration} failedDeliveries={snapshot.failedDeliveries} deadLetterWork={snapshot.deadLetterWork} rejectedProviderRequests={snapshot.rejectedProviderRequests} estimatedMessagingSpendUsd={snapshot.estimatedMessagingSpendUsd} />
         <Panel title="Command guide" icon={<UserRound aria-hidden="true" />}><dl className="command-guide"><div><dt>STATUS</dt><dd>Current case and call state</dd></div><div><dt>CALL &lt;code&gt;</dt><dd>Use one short-lived call authorization</dd></div><div><dt>PAUSE / RESUME</dt><dd>Control Liaison during a call</dd></div><div><dt>HANGUP</dt><dd>End the active call</dd></div><div><dt>STOP</dt><dd>Opt out of SMS messaging</dd></div></dl></Panel>
         <p className="provider-note"><CircleDollarSign aria-hidden="true" /> Cost figures are estimates, not invoices. Carrier messaging and Twilio usage charges may apply when real providers are enabled.</p>
       </aside>

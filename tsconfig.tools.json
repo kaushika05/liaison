@@ -10,5 +10,5 @@
     "noEmit": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["scripts", "tests/unit", "tests/integration", "vitest.config.ts"]
+  "include": ["scripts", "tests/unit", "tests/integration", "tests/setup-hermetic-env.ts", "vitest.config.ts"]
 }

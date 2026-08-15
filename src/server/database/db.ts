@@ -508,7 +508,11 @@ export class LiaisonDatabase {
   constructor(filename: string) {
     if (filename !== ":memory:") fs.mkdirSync(path.dirname(path.resolve(filename)), { recursive: true });
     this.db = new Database(filename);
-    this.db.pragma("journal_mode = WAL"); this.db.pragma("foreign_keys = ON"); this.migrate();
+    this.db.pragma("journal_mode = WAL"); this.db.pragma("foreign_keys = ON");
+    // The retention job and backup tooling open the same file, so a writer should wait briefly
+    // rather than fail immediately with SQLITE_BUSY.
+    this.db.pragma("busy_timeout = 5000");
+    this.migrate();
   }
 
   private migrate(): void {
@@ -828,7 +832,7 @@ export class LiaisonDatabase {
   }
   getCase(id: string): CaseDetail | null {
     const r = this.db.prepare("SELECT * FROM cases WHERE id = ?").get(id) as CaseRow | undefined;
-    return r ? { id: r.id, companyName: r.company_name, title: r.title, status: r.status, updatedAt: r.updated_at, intake: JSON.parse(r.intake_json) as Record<string, unknown>, brief: r.brief_json ? JSON.parse(r.brief_json) as CallBrief : null, approvedVersion: r.approved_version, disclosures: JSON.parse(r.disclosure_metadata_json) as CaseDetail["disclosures"] } : null;
+    return r ? { id: r.id, companyName: r.company_name, title: r.title, status: r.status, createdAt: r.created_at, updatedAt: r.updated_at, intake: JSON.parse(r.intake_json) as Record<string, unknown>, brief: r.brief_json ? JSON.parse(r.brief_json) as CallBrief : null, approvedVersion: r.approved_version, disclosures: JSON.parse(r.disclosure_metadata_json) as CaseDetail["disclosures"] } : null;
   }
   savePlan(caseId: string, brief: CallBrief): void {
     const now = new Date().toISOString();
@@ -1933,6 +1937,21 @@ export class LiaisonDatabase {
     const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
     return (this.db.prepare("SELECT * FROM outbound_messages WHERE processing_state='DEAD_LETTER' OR delivery_state IN ('FAILED','UNDELIVERED') ORDER BY status_updated_at DESC,id DESC LIMIT ?").all(safeLimit) as OutboundMessageRow[])
       .map(outboundMessageFromRow);
+  }
+
+  /**
+   * Segments actually submitted to a carrier. Web-thread messages are excluded because they
+   * cost nothing, and rows that never left the outbox are excluded because they were never billed.
+   */
+  sumBillableOutboundSegments(threadId?: string): number {
+    const row = threadId
+      ? this.db.prepare("SELECT COALESCE(SUM(segment_estimate),0) AS total FROM outbound_messages WHERE provider_kind='TWILIO_SMS' AND processing_state='COMPLETED' AND thread_id=?").get(threadId)
+      : this.db.prepare("SELECT COALESCE(SUM(segment_estimate),0) AS total FROM outbound_messages WHERE provider_kind='TWILIO_SMS' AND processing_state='COMPLETED'").get();
+    return (row as { total: number }).total;
+  }
+
+  countProviderSecurityEvents(): number {
+    return (this.db.prepare("SELECT COUNT(*) AS total FROM provider_security_events").get() as { total: number }).total;
   }
 
   createCall(call: { id: string; caseId: string; mode: "SIMULATOR"|"TWILIO"; scenarioId: string|null; state: CallState; activity: string; objective: string; authorizationId?: string }): void {

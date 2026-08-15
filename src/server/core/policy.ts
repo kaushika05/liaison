@@ -127,6 +127,30 @@ export function prohibitedUserActionReason(text: string, forbiddenActions: reado
   return null;
 }
 
+export type RequestedDisclosureCategory = "ACCOUNT_NUMBER" | "ORDER_NUMBER" | "ADDRESS" | "DATE_OF_BIRTH";
+
+const disclosureRequestPatterns: Array<[RequestedDisclosureCategory, RegExp]> = [
+  ["DATE_OF_BIRTH", /\b(?:date of birth|birth date|birthdate|\bdob\b)\b/i],
+  // "confirmation number" is deliberately excluded: representatives usually *give* one rather than
+  // request it, and treating it as a disclosure request would misroute terminal scenario turns.
+  ["ORDER_NUMBER", /\b(?:order|booking|reservation)\s*(?:number|no\.?|id|lookup)\b|\blook up (?:the |my )?order\b/i],
+  ["ADDRESS", /\b(?:billing|mailing|service|street|home)\s+address\b|\baddress (?:on|for) (?:the |your |my )?(?:account|file)\b/i],
+  // The category word is always required. Bare "identification" or "verification" matches nothing,
+  // which is what stops one card's policy wording from unlocking a different card's category.
+  ["ACCOUNT_NUMBER", /\baccount\s*(?:number|no\.?|id|identification|verification|authentication)\b|\b(?:member|customer)\s*(?:number|no\.?|id)\b|\b(?:authenticate|verify)\s+(?:the |your |my )?account\b/i],
+];
+
+/**
+ * Classifies which sensitive category a representative is asking for, using only a closed set of
+ * disjoint patterns. Remote speech can therefore *narrow* which disclosure card is releasable but
+ * can never widen it: unrecognised text yields null, and null denies. Deliberately not a similarity
+ * or term-overlap match, because the input is attacker-controlled.
+ */
+export function classifyRequestedDisclosureCategory(text: string): RequestedDisclosureCategory | null {
+  const folded = text.normalize("NFKC");
+  return disclosureRequestPatterns.find(([, pattern]) => pattern.test(folded))?.[0] ?? null;
+}
+
 export function validateDtmf(digits: string, sensitive = false): boolean {
   if (!/^[0-9w#*]+$/.test(digits)) return false;
   return sensitive ? digits.length <= 64 : digits.length <= 4;

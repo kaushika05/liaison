@@ -164,7 +164,7 @@ export class TwilioSmsMessagingAdapter implements MessagingAdapter {
     if (!this.messagingServiceSid && !this.fromNumber) {
       throw new Error("TWILIO_SMS_SENDER_REQUIRED");
     }
-    this.client = options.client ?? (twilio(options.accountSid, options.authToken) as unknown as TwilioMessageClient);
+    this.client = options.client ?? (twilio(options.accountSid, options.authToken));
   }
 
   async sendText(input: OutboundTextMessage): Promise<OutboundMessageResult> {
@@ -239,10 +239,6 @@ export class TwilioSmsMessagingAdapter implements MessagingAdapter {
       ...(optionalValue(input.form, "ErrorMessage") ? { errorMessage: optionalValue(input.form, "ErrorMessage") } : {}),
       parameters: copyFormParameters(input.form),
     };
-  }
-
-  emptyMessagingResponse(): string {
-    return createEmptyTwilioMessagingResponse();
   }
 }
 

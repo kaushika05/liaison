@@ -1,0 +1,8 @@
+# Normalize line endings so the repository is byte-identical regardless of contributor platform.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary

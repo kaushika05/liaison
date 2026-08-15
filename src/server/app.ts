@@ -7,7 +7,6 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import websocket from "@fastify/websocket";
 import staticFiles from "@fastify/static";
-import middie from "@fastify/middie";
 import twilio from "twilio";
 import { z, ZodError } from "zod";
 import type { RawData } from "ws";
@@ -20,18 +19,21 @@ import { ModelService } from "./agent/model-service.js";
 import { CallService } from "./services/call-service.js";
 import { MessagingOrchestrator } from "./services/messaging-orchestrator.js";
 import { createEmptyTwilioMessagingResponse, type ProviderFormParameters } from "./messaging/adapter.js";
+import { projectAttentionRequest, projectCommitment, projectExecutionPlan } from "./protocol/projection.js";
+import { attachViteDevMiddleware } from "./dev-middleware.js";
 
 const idSchema=z.object({caseId:z.string().uuid()}); const callIdSchema=z.object({callId:z.string().uuid()});
 const approvalParams=z.object({callId:z.string().uuid(),approvalId:z.string().uuid()});
-const sessions=new Map<string,number>();
 
-function sessionId(request:FastifyRequest):string|null{ const raw=request.cookies.liaison_session; if(!raw)return null; const unsigned=request.unsignCookie(raw); if(!unsigned.valid)return null; const expiry=sessions.get(unsigned.value); if(!expiry||expiry<Date.now()){sessions.delete(unsigned.value);return null;} return unsigned.value; }
+/** Sessions are per-app-instance so closing an app releases them; they are deliberately not durable. */
+function readSessionId(request:FastifyRequest,sessions:Map<string,number>):string|null{ const raw=request.cookies.liaison_session; if(!raw)return null; const unsigned=request.unsignCookie(raw); if(!unsigned.valid)return null; const expiry=sessions.get(unsigned.value); if(!expiry||expiry<Date.now()){sessions.delete(unsigned.value);return null;} return unsigned.value; }
 function tokenSecret(config:Config){return config.CALL_TOKEN_SECRET||config.SESSION_SECRET||"liaison-development-call-token";}
 function tokenCallId(token:string,config:Config):string|null{ const value=verifyToken<{callId:string}>(token,tokenSecret(config)); return value?.callId??null; }
 
 export interface AppContext { app:FastifyInstance; service:CallService; messaging:MessagingOrchestrator; database:LiaisonDatabase; disclosures:DisclosureStore }
 export async function buildApp(overrides:Partial<Config>={},options:{serveClient?:boolean;databasePath?:string}={}):Promise<AppContext>{
   const config={...loadConfig(),...overrides,DATABASE_PATH:options.databasePath??overrides.DATABASE_PATH??loadConfig().DATABASE_PATH};
+  const sessions=new Map<string,number>(); const sessionId=(request:FastifyRequest)=>readSessionId(request,sessions);
   const app=Fastify({logger:config.NODE_ENV==="test"?false:{level:config.LOG_LEVEL,redact:["req.headers.authorization","req.headers.cookie","res.headers.set-cookie"]},logController:new LogController({disableRequestLogging:true}),bodyLimit:256*1024,routerOptions:{maxParamLength:512},trustProxy:config.TRUST_PROXY,requestIdHeader:"x-request-id",genReqId:()=>randomUUID()});
   const database=new LiaisonDatabase(config.DATABASE_PATH); const disclosures=new DisclosureStore(); const models=new ModelService(config,(item)=>app.log.info({event:"model_response",...item},"Model response completed"));const service=new CallService(config,database,disclosures,models);await service.recoverInterruptedCall();const messaging=new MessagingOrchestrator(config,database,service,models);messaging.start();
   await app.register(cookie,{secret:config.SESSION_SECRET||"liaison-development-session-secret-change-me"});
@@ -70,6 +72,26 @@ export async function buildApp(overrides:Partial<Config>={},options:{serveClient
   app.post("/api/cases/:caseId/plan",async(request)=>service.generatePlan(idSchema.parse(request.params).caseId));
   app.patch("/api/cases/:caseId/plan",async(request)=>service.savePlan(idSchema.parse(request.params).caseId,request.body));
   app.post("/api/cases/:caseId/plan/approve",async(request)=>service.approvePlan(idSchema.parse(request.params).caseId));
+  // Liaison Universal Support Protocol v1 surface. These routes emit schema-validated documents so
+  // third-party tooling has a stable contract that does not depend on internal storage shapes.
+  app.get("/api/cases/:caseId/execution-plan",async(request)=>{
+    const caseId=idSchema.parse(request.params).caseId; const caseItem=service.getCase(caseId);
+    if(!caseItem)throw new Error("CASE_NOT_FOUND");
+    const thread=database.getActiveSupportThread("owner");
+    const plan=projectExecutionPlan({caseItem,thread,conditionalAuthorityRules:thread?database.listConditionalAuthorityRules(thread.id,caseId):[]});
+    if(!plan)throw new Error("PLAN_NOT_FOUND: Generate a plan before requesting its protocol document.");
+    return plan;
+  });
+  app.get("/api/attention/:attentionRequestId",async(request)=>{
+    const id=z.object({attentionRequestId:z.string().uuid()}).parse(request.params).attentionRequestId;
+    const record=database.getAttentionRequest(id); if(!record)throw new Error("ATTENTION_REQUEST_NOT_FOUND");
+    const caseItem=record.caseId?service.getCase(record.caseId):null;
+    const projected=projectAttentionRequest({record,currentGoal:caseItem?.brief?.desiredOutcome??""});
+    if(!projected)throw new Error("ATTENTION_REQUEST_NOT_FOUND: The request is not bound to a case and call.");
+    return projected;
+  });
+  app.get("/api/cases/:caseId/commitments",async(request)=>({commitments:database.listCommitments({caseId:idSchema.parse(request.params).caseId}).map(projectCommitment)}));
+
   app.get("/api/simulator/scenarios",async()=>({scenarios:service.listScenarios()}));
   app.post("/api/cases/:caseId/simulate",async(request)=>{if(config.NODE_ENV==="production")throw new Error("MESSAGING_AUTHORIZATION_REQUIRED: Start the simulator through the messaging thread with its exact one-time CALL code.");const body=z.object({scenarioId:z.string(),accelerated:z.boolean().default(true)}).parse(request.body);return service.startSimulation(idSchema.parse(request.params).caseId,body.scenarioId,body.accelerated);});
   app.post("/api/cases/:caseId/calls",async(request)=>{z.object({confirmed:z.literal(true),privacyConfirmed:z.literal(true)}).parse(request.body);throw new Error("CALL_AUTHORIZATION_REQUIRED: Approve the plan in the messaging thread and reply with the exact one-time CALL code.");});
@@ -114,9 +136,9 @@ export async function buildApp(overrides:Partial<Config>={},options:{serveClient
 
   if(options.serveClient!==false){
     if(config.NODE_ENV==="production"){await app.register(staticFiles,{root:path.resolve("dist")});app.setNotFoundHandler((request,reply)=>request.method==="GET"?reply.sendFile("index.html"):reply.code(404).send({error:{code:"NOT_FOUND",message:"Not found"}}));}
-    else {await app.register(middie);const {createServer}=await import("vite");const vite=await createServer({server:{middlewareMode:true},appType:"spa"});app.use((request,response,next)=>{const url=request.url??"";if(url.startsWith("/api/")||url==="/health"||url==="/ready"||url.startsWith("/webhooks/"))return next();return vite.middlewares(request,response,next)});app.addHook("onClose",async()=>vite.close());}
+    else await attachViteDevMiddleware(app);
   }
   const cleanup=setInterval(()=>{const now=Date.now();for(const[id,expiry]of sessions)if(expiry<now)sessions.delete(id);},60_000);cleanup.unref();
-  app.addHook("onClose",async()=>{clearInterval(cleanup);await service.shutdown();await messaging.stop();disclosures.clearAll();database.close();});
+  app.addHook("onClose",async()=>{clearInterval(cleanup);sessions.clear();await service.shutdown();await messaging.stop();disclosures.clearAll();database.close();});
   return {app,service,messaging,database,disclosures};
 }

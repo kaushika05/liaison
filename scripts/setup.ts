@@ -12,7 +12,7 @@ const targetArg=process.argv.find((value)=>value.startsWith("--output="));
 const target=path.resolve(targetArg?.slice("--output=".length)||".env");
 const interactive=Boolean(input.isTTY&&output.isTTY)&&!args.has("--defaults");
 let suppressTerminalEcho=false;
-const guardedOutput=new Writable({write(chunk,_encoding,done){if(!suppressTerminalEcho)output.write(chunk);done();}});
+const guardedOutput=new Writable({write(chunk:string|Uint8Array,_encoding,done){if(!suppressTerminalEcho)output.write(chunk);done();}});
 const rl=createInterface({input,output:guardedOutput,terminal:interactive});
 const secret=()=>randomBytes(32).toString("base64url");
 const ask=async(question:string,fallback="")=>interactive?(await rl.question(`${question}${fallback?` [${fallback}]`:""}: `)).trim()||fallback:fallback;
@@ -58,9 +58,9 @@ try{
     "", "# Model provider",
     `LLM_MODE=${llm}`,`OPENAI_API_KEY=${openaiKey}`,"OPENAI_BASE_URL=","PLANNER_MODEL=gpt-5.6-luna","CONTROLLER_MODEL=gpt-5.6-luna","OUTCOME_MODEL=gpt-5.6-luna","OPENAI_REASONING_EFFORT=low","OPENAI_TIMEOUT_MS=12000",
     "", "# Messaging",
-    `MESSAGING_MODE=${messaging}`,"ALLOW_REAL_MESSAGING=false",`TWILIO_MESSAGING_SERVICE_SID=${messagingSid}`,`TWILIO_SMS_FROM_NUMBER=${smsFrom}`,"MESSAGING_REGISTRATION_CONFIRMED=false","SMS_UPDATE_DETAIL=STANDARD","SMS_DECISION_TIMEOUT_SECONDS=90","MAX_USER_WAIT_SECONDS=180","SMS_MAX_SEGMENTS_PER_MESSAGE=3","ESTIMATED_SMS_COST_PER_SEGMENT_USD=0","UNAUTHORIZED_SENDER_RESPONSE=false",
+    `MESSAGING_MODE=${messaging}`,"ALLOW_REAL_MESSAGING=false",`TWILIO_MESSAGING_SERVICE_SID=${messagingSid}`,`TWILIO_SMS_FROM_NUMBER=${smsFrom}`,"MESSAGING_REGISTRATION_CONFIRMED=false","SMS_UPDATE_DETAIL=STANDARD","SMS_DECISION_TIMEOUT_SECONDS=90","MAX_USER_WAIT_SECONDS=180","SMS_MAX_SEGMENTS_PER_MESSAGE=3","ESTIMATED_SMS_COST_PER_SEGMENT_USD=0",
     "", "# Voice and shared Twilio credentials",
-    `TELEPHONY_MODE=${voice}`,"ALLOW_REAL_CALLS=false",`TWILIO_ACCOUNT_SID=${accountSid}`,`TWILIO_AUTH_TOKEN=${authToken}`,`TWILIO_VOICE_FROM_NUMBER=${voiceFrom}`,"TWILIO_FROM_NUMBER=","MAX_CALL_DURATION_MINUTES=30","MAX_CALLS_PER_DAY=5","MAX_CONCURRENT_CALLS=1","ALLOWED_DESTINATION_PREFIXES=+1","ESTIMATED_TELEPHONY_COST_PER_MINUTE_USD=0.084",
+    `TELEPHONY_MODE=${voice}`,"ALLOW_REAL_CALLS=false",`TWILIO_ACCOUNT_SID=${accountSid}`,`TWILIO_AUTH_TOKEN=${authToken}`,`TWILIO_VOICE_FROM_NUMBER=${voiceFrom}`,"TWILIO_FROM_NUMBER=","MAX_CALL_DURATION_MINUTES=30","MAX_CALLS_PER_DAY=5","ALLOWED_DESTINATION_PREFIXES=+1","ESTIMATED_TELEPHONY_COST_PER_MINUTE_USD=0.084",
     "", "# Security, retention, and logging",
     "SECURE_ACTION_LINK_TTL_MINUTES=10","DATA_RETENTION_DAYS=30","TRUST_PROXY=false","LOG_LEVEL=info","",
   ];

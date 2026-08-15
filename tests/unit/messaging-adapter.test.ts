@@ -158,7 +158,6 @@ describe("messaging adapters", () => {
 
   it("returns valid empty TwiML and rejects missing sender configuration", () => {
     expect(createEmptyTwilioMessagingResponse()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response/>');
-    expect(adapter().emptyMessagingResponse()).toBe('<?xml version="1.0" encoding="UTF-8"?><Response/>');
     expect(() => adapter({ fromNumber: " ", messagingServiceSid: undefined })).toThrow("TWILIO_SMS_SENDER_REQUIRED");
   });
 });

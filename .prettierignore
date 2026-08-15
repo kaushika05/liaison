@@ -1,0 +1,10 @@
+dist
+dist-server
+node_modules
+coverage
+playwright-report
+test-results
+data
+study-packet
+package-lock.json
+protocol/v1

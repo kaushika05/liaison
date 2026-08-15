@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject, type TextareaHTMLAttributes } from "react";
 import { Accessibility, Check, ChevronLeft, CircleAlert, Clock3, Download, Ear, FileText, Gauge, KeyRound, LockKeyhole, LogOut, MessageSquareText, Pause, PhoneCall, Play, Plus, ShieldCheck, Square, Type, Volume2 } from "lucide-react";
 import type { ApprovalRequest, AuthorityEnvelope, CallBrief, OutcomeReport, PublicConfig } from "../shared/domain";
-import { defaultAuthority } from "../shared/domain";
+import { defaultAuthority } from "../shared/authority-defaults";
 import type { CallSnapshot, CaseDetail, CaseSummary, SessionResponse } from "../shared/api";
 import { api, patch, post } from "./api";
 import { MessagingThread } from "./MessagingThread";
 
 type View="loading"|"login"|"messaging"|"home"|"intake"|"plan"|"live";
 interface Scenario {id:string;name:string;description:string;requiresApproval:boolean}
-const blankConfig:PublicConfig={telephonyMode:"simulator",llmMode:"mock",twilioConfigured:false,openaiConfigured:false,allowRealCalls:false,maxDurationMinutes:30,estimatedCostPerMinuteUsd:.084,developmentBypass:false,appName:"Liaison",instanceMode:"personal",ownerConfigured:false,messagingMode:"web",messagingConfigured:false,allowRealMessaging:false,messagingDetail:"STANDARD",inboundMessagingWebhookUrl:"",messagingStatusWebhookUrl:"",messagingRegistrationConfirmed:false};
+const blankConfig:PublicConfig={telephonyMode:"simulator",llmMode:"mock",twilioConfigured:false,openaiConfigured:false,allowRealCalls:false,maxDurationMinutes:30,estimatedCostPerMinuteUsd:.084,developmentBypass:false,appName:"Liaison",instanceMode:"personal",ownerConfigured:false,messagingMode:"web",messagingConfigured:false,allowRealMessaging:false,messagingDetail:"STANDARD",estimatedSmsCostPerSegmentUsd:0,inboundMessagingWebhookUrl:"",messagingStatusWebhookUrl:"",messagingRegistrationConfirmed:false};
 const toLines=(text:string)=>text.split("\n").map((value)=>value.trim()).filter(Boolean);
 const fromLines=(items:string[])=>items.join("\n");
 const formatDuration=(seconds:number)=>`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")}`;

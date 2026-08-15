@@ -5,7 +5,7 @@ import { approvalRequestSchema, callBriefSchema, caseIntakeSchema, secureDisclos
 import type { CallSnapshot, CaseDetail } from "../../shared/api.js";
 import type { Config } from "../config.js";
 import { publicConfig } from "../config.js";
-import { detectHighRisk, estimateCost, normalizeUsPhone, prohibitedSecretReason, prohibitedSecretRefusalText, prohibitedUserActionReason, redactText, sanitizePayload, signToken, transitionState, validateDecision, validateDtmf, validateOutcome } from "../core/policy.js";
+import { classifyRequestedDisclosureCategory, detectHighRisk, estimateCost, normalizeUsPhone, prohibitedSecretReason, prohibitedSecretRefusalText, prohibitedUserActionReason, redactText, sanitizePayload, signToken, transitionState, validateDecision, validateDtmf, validateOutcome } from "../core/policy.js";
 import { LiaisonDatabase, type CaseDeletionResult, type StoredCall } from "../database/db.js";
 import { DisclosureStore } from "../security/disclosures.js";
 import { ModelService, type ModelUsageRecord } from "../agent/model-service.js";
@@ -16,6 +16,7 @@ import type { AutonomyMode } from "../../shared/protocol.js";
 import { evaluateApprovalConditionalAuthority } from "../core/runtime-authority.js";
 import { extractConditionalAuthorityRules } from "../messaging/conditional-rules.js";
 import { redactInboundSmsSecrets } from "../messaging/secrets.js";
+import { projectDisclosureEvent } from "../protocol/projection.js";
 
 interface Runtime {
   adapter: TelephonyAdapter; scenario?: SimulatorScenario; stepIndex: number; timer?: NodeJS.Timeout; durationTimer?: NodeJS.Timeout;
@@ -177,7 +178,9 @@ export class CallService {
       return {action:"SPEAK",text:item.brief!.openingIssueStatement.slice(0,400),nextState:"EXPLAINING_ISSUE",policyReasonCode:"EXPLAIN_APPROVED_BRIEF",capturedFacts:facts};
     }
     if(/please hold|transfer/.test(lower)) return {action:"WAIT",reason:/transfer/.test(lower)?"TRANSFER":"HOLD",nextState:"ON_HOLD",policyReasonCode:"REMOTE_HOLD",capturedFacts:facts};
-    const requestedDisclosureCategory=/account number|member (?:number|id)|customer (?:number|id)/.test(lower)?"ACCOUNT_NUMBER":/order number|booking (?:number|id)|reservation (?:number|id)/.test(lower)?"ORDER_NUMBER":/billing address|mailing address|service address|street address/.test(lower)?"ADDRESS":/date of birth|birth date|\bdob\b/.test(lower)?"DATE_OF_BIRTH":null;
+    // Same classifier the disclosure store gates on, so a card the mock selects is always one the
+    // store will actually release.
+    const requestedDisclosureCategory=classifyRequestedDisclosureCategory(text);
     if(requestedDisclosureCategory){
       const availableIds=new Set(this.disclosures.metadata(row.case_id).map((card)=>card.id));
       const card=item.disclosures.find((candidate)=>candidate.category===requestedDisclosureCategory&&candidate.permission==="ASK"&&availableIds.has(candidate.id));
@@ -253,7 +256,12 @@ export class CallService {
         const entry=this.disclosures.resolve(currentRow.case_id,current.disclosureCardId,current.executionChannel,current.representativeRequest);if(!entry)throw new Error("DISCLOSURE_NOT_AVAILABLE_FOR_PURPOSE");
         if(current.executionChannel==="DTMF"){if(!validateDtmf(entry.value,true))throw new Error("INVALID_SENSITIVE_DTMF");await runtime.adapter.sendDigits(callId,entry.value);}
         else await runtime.adapter.speak(callId,entry.value,{interruptible:true});
-        const marker=`[REDACTED:${entry.metadata.category}:${entry.metadata.label}]`;if(current.executionChannel==="DTMF")this.addTurn(callId,"SYSTEM",`Sent approved ${entry.metadata.label} by DTMF: ${marker}`);else this.addTurn(callId,"LIAISON",`Provided approved ${entry.metadata.label}: ${marker}`);runtime.disclosureLedger.push({label:entry.metadata.label,marker,channel:current.executionChannel,timestamp:new Date().toISOString()});this.record(callId,currentRow.case_id,"APPROVAL_APPROVED",{approvalId,label:entry.metadata.label,channel:current.executionChannel},"USER");
+        const marker=`[REDACTED:${entry.metadata.category}:${entry.metadata.label}]`;if(current.executionChannel==="DTMF")this.addTurn(callId,"SYSTEM",`Sent approved ${entry.metadata.label} by DTMF: ${marker}`);else this.addTurn(callId,"LIAISON",`Provided approved ${entry.metadata.label}: ${marker}`);const occurredAt=new Date().toISOString();runtime.disclosureLedger.push({label:entry.metadata.label,marker,channel:current.executionChannel,timestamp:occurredAt});
+        // Durable metadata-only record of the disclosure. The in-memory ledger above is lost on
+        // restart by design; this protocol document is what survives for audit.
+        const disclosureEvent=projectDisclosureEvent({id:randomUUID(),caseId:currentRow.case_id,callId,disclosureCardId:current.disclosureCardId,category:entry.metadata.category,channel:current.executionChannel,purpose:entry.metadata.allowedPurposes[0]??"Approved disclosure",occurredAt});
+        this.record(callId,currentRow.case_id,"DISCLOSURE_DELIVERED",{disclosureEvent},"POLICY");
+        this.record(callId,currentRow.case_id,"APPROVAL_APPROVED",{approvalId,label:entry.metadata.label,channel:current.executionChannel},"USER");
       }else{await runtime.adapter.speak(callId,current.proposedSpeech,{interruptible:true});this.addTurn(callId,"LIAISON",current.proposedSpeech);this.record(callId,currentRow.case_id,"APPROVAL_APPROVED",{approvalId},"USER");}
       if(replacement)this.addTurn(callId,"USER_EXACT",replacement);
       if(!this.database.completeApprovalExecution({approvalId,executionId:reservation.execution.executionId,targetStatus:nextStatus}))throw new Error("APPROVAL_EXECUTION_FINALIZATION_FAILED");
@@ -284,11 +292,14 @@ export class CallService {
     if(row.mode!=="TWILIO")throw new Error("TWILIO_CALL_IDENTITY_NOT_READY");
     if(!callSid)throw new Error("TWILIO_CALL_IDENTITY_MISMATCH");
     if(!this.config.TWILIO_ACCOUNT_SID||accountSid!==this.config.TWILIO_ACCOUNT_SID)throw new Error("TWILIO_ACCOUNT_IDENTITY_MISMATCH");
-    if(row.twilio_call_sid){if(callSid!==row.twilio_call_sid)throw new Error("TWILIO_CALL_IDENTITY_MISMATCH");return;}
+    if(row.twilio_call_sid){if(callSid!==row.twilio_call_sid)throw new Error("TWILIO_CALL_IDENTITY_MISMATCH");this.twilioAdapter.bindProviderCallId(callId,callSid);return;}
     if(!this.database.adoptTwilioCallSidForAmbiguousStart(callId,callSid)){
       const current=this.requireCall(callId);
       if(current.twilio_call_sid!==callSid)throw new Error("TWILIO_CALL_IDENTITY_NOT_READY");
     }
+    // The adapter learned no SID because `startCall` never returned one. Bind it now, otherwise a
+    // later hang-up would report success without terminating a live provider call.
+    this.twilioAdapter.bindProviderCallId(callId,callSid);
     this.record(callId,row.case_id,"CALL_STATE_CHANGED",{providerCallIdBound:true,recoveredFrom:"AMBIGUOUS_START"},"TWILIO");
   }
   async hangup(callId:string):Promise<CallSnapshot>{ const row=this.requireCall(callId); this.record(callId,row.case_id,"CALL_END_REQUESTED",{reason:"USER_REQUESTED"},"USER"); await this.terminalize(callId,"USER_REQUESTED",undefined,"UNRESOLVED"); return this.snapshot(callId); }
@@ -321,7 +332,14 @@ export class CallService {
   isTerminalFinalizationInProgress(callId:string):boolean{return this.runtimes.get(callId)?.terminalizing??false;}
   onCallEvent(callId:string,listener:(event:BrowserEvent)=>void):()=>void { const key=`call:${callId}`; this.events.on(key,listener); return()=>this.events.off(key,listener); }
   onAnyCallEvent(listener:(event:ApplicationCallEvent)=>void):()=>void { this.events.on("call:any",listener); return()=>this.events.off("call:any",listener); }
-  async shutdown():Promise<void>{ const active=this.database.getActiveCall(); if(active&&!this.isUnconfirmedTwilioGuard(active))await this.terminalize(active.id,"TECHNICAL_FAILURE","Server shutdown ended the active call","TECHNICAL_FAILURE"); this.disclosures.clearAll(); }
+  async shutdown():Promise<void>{
+    const active=this.database.getActiveCall();
+    // Only a call this process actually owns in memory can be torn down here. A row without a
+    // runtime was never driven by this instance, so leave it for `recoverInterruptedCall` on the
+    // next boot rather than failing the shutdown hook.
+    if(active&&this.runtimes.has(active.id)&&!this.isUnconfirmedTwilioGuard(active))await this.terminalize(active.id,"TECHNICAL_FAILURE","Server shutdown ended the active call","TECHNICAL_FAILURE");
+    this.disclosures.clearAll();
+  }
 
   private async terminalize(callId:string,reason:EndReason,technical?:string,statusOverride?:string):Promise<void>{
     const row=this.requireCall(callId); if(this.isTerminal(row.state)) return; const runtime=this.runtime(callId);if(runtime.terminalization)return runtime.terminalization;runtime.terminalization=this.performTerminalization(callId,row,runtime,reason,technical,statusOverride);return runtime.terminalization;
@@ -412,6 +430,6 @@ export class CallService {
 
 function deterministicCaseId(idempotencyKey:string):string{
   const hex=createHash("sha256").update(`liaison-case:${idempotencyKey}`).digest("hex").slice(0,32).split("");
-  hex[12]="5";hex[16]=((Number.parseInt(hex[16]!,16)&0x3)|0x8).toString(16);
+  hex[12]="5";hex[16]=((Number.parseInt(hex[16],16)&0x3)|0x8).toString(16);
   const value=hex.join("");return`${value.slice(0,8)}-${value.slice(8,12)}-${value.slice(12,16)}-${value.slice(16,20)}-${value.slice(20)}`;
 }

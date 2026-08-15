@@ -7,3 +7,6 @@ playwright-report/
 test-results/
 *.log
 .DS_Store
+
+# Personal study material; not part of the published project.
+study-packet/

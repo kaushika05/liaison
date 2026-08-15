@@ -78,6 +78,7 @@ export const attentionStatusSchema = z.enum([
   "REJECTED",
   "REPLACED",
   "EXPIRED",
+  "SUPERSEDED",
   "CANCELLED",
 ]);
 export type AttentionStatus = z.infer<typeof attentionStatusSchema>;

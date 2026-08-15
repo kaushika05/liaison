@@ -30,30 +30,8 @@ export const authorityEnvelopeSchema = z.object({
 
 export type AuthorityEnvelope = z.infer<typeof authorityEnvelopeSchema>;
 
-export const defaultAuthority: AuthorityEnvelope = {
-  navigateIvr: "ALLOW",
-  explainIssue: "ALLOW",
-  askQuestions: "ALLOW",
-  requestEscalation: "ALLOW",
-  requestCaseNumber: "ALLOW",
-  requestWrittenConfirmation: "ALLOW",
-  disclosePersonalData: "ASK",
-  acceptFinancialOutcome: "ASK",
-  acceptAlternativeOutcome: "ASK",
-  modifyAccount: "ASK",
-  cancelService: "ASK",
-  scheduleCommitment: "ASK",
-  endWithoutResolution: "ASK",
-  makePurchase: "DENY",
-  discloseCredential: "DENY",
-  discloseOtp: "DENY",
-  discloseFullSsn: "DENY",
-  disclosePaymentCard: "DENY",
-  waiveLegalRight: "DENY",
-  impersonateUser: "DENY",
-  maximumAuthorizedCostCents: 0,
-  forbiddenActions: [],
-};
+export { defaultAuthority } from "./authority-defaults.js";
+import { defaultAuthority } from "./authority-defaults.js";
 
 export const chronologyItemSchema = z.object({
   id: z.string().min(1),
@@ -238,6 +216,7 @@ export interface PublicConfig {
   messagingConfigured: boolean;
   allowRealMessaging: boolean;
   messagingDetail: "MINIMAL" | "STANDARD" | "VERBOSE";
+  estimatedSmsCostPerSegmentUsd: number;
   inboundMessagingWebhookUrl: string;
   messagingStatusWebhookUrl: string;
   messagingRegistrationConfirmed: boolean;

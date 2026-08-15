@@ -20,11 +20,11 @@ const schema = z.object({
   MESSAGING_REGISTRATION_CONFIRMED: bool.default(false),
   SMS_UPDATE_DETAIL: z.enum(["MINIMAL", "STANDARD", "VERBOSE"]).default("STANDARD"), SMS_DECISION_TIMEOUT_SECONDS: z.coerce.number().int().min(15).max(3_600).default(90),
   MAX_USER_WAIT_SECONDS: z.coerce.number().int().min(30).max(7_200).default(180), SMS_MAX_SEGMENTS_PER_MESSAGE: z.coerce.number().int().min(1).max(10).default(3),
-  ESTIMATED_SMS_COST_PER_SEGMENT_USD: z.coerce.number().min(0).default(0), UNAUTHORIZED_SENDER_RESPONSE: bool.default(false),
+  ESTIMATED_SMS_COST_PER_SEGMENT_USD: z.coerce.number().min(0).default(0),
   TELEPHONY_MODE: z.enum(["simulator", "twilio"]).default("simulator"), ALLOW_REAL_CALLS: bool.default(false),
   TWILIO_ACCOUNT_SID: z.string().default(""), TWILIO_AUTH_TOKEN: z.string().default(""), TWILIO_FROM_NUMBER: z.string().default(""), TWILIO_VOICE_FROM_NUMBER: z.string().default(""),
   MAX_CALL_DURATION_MINUTES: z.coerce.number().positive().max(120).default(30), MAX_CALLS_PER_DAY: z.coerce.number().int().positive().max(100).default(5),
-  MAX_CONCURRENT_CALLS: z.coerce.number().int().min(1).max(1).default(1), ALLOWED_DESTINATION_PREFIXES: z.string().default("+1"),
+  ALLOWED_DESTINATION_PREFIXES: z.string().default("+1"),
   ESTIMATED_TELEPHONY_COST_PER_MINUTE_USD: z.coerce.number().min(0).default(0.084), SECURE_ACTION_LINK_TTL_MINUTES: z.coerce.number().int().min(1).max(1_440).default(10), DATA_RETENTION_DAYS: z.coerce.number().int().min(1).default(30),
   LOG_LEVEL: z.string().default("info"), TRUST_PROXY: bool.default(false),
 });
@@ -68,6 +68,7 @@ export function publicConfig(config: Config): PublicConfig {
     estimatedCostPerMinuteUsd: config.ESTIMATED_TELEPHONY_COST_PER_MINUTE_USD, developmentBypass: config.NODE_ENV !== "production" && !config.APP_ACCESS_KEY,
     appName: config.APP_NAME, instanceMode: config.INSTANCE_MODE, ownerConfigured: Boolean(config.OWNER_PHONE_E164), messagingMode: config.MESSAGING_MODE,
     messagingConfigured, allowRealMessaging: config.ALLOW_REAL_MESSAGING && messagingConfigured && config.MESSAGING_REGISTRATION_CONFIRMED, messagingDetail: config.SMS_UPDATE_DETAIL,
+    estimatedSmsCostPerSegmentUsd: config.ESTIMATED_SMS_COST_PER_SEGMENT_USD,
     inboundMessagingWebhookUrl: `${config.PUBLIC_BASE_URL}/webhooks/twilio/messaging/inbound`, messagingStatusWebhookUrl: `${config.PUBLIC_BASE_URL}/webhooks/twilio/messaging/status`, messagingRegistrationConfirmed: config.MESSAGING_REGISTRATION_CONFIRMED,
   };
 }

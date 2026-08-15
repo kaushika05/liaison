@@ -1,125 +1,130 @@
+<div align="center">
+
 # Liaison
 
-Liaison is an accessible, self-hosted support-call agent for one owner. Start in a secure text thread or by SMS, describe a low-risk customer-support problem in ordinary language, inspect the plan and authority, authorize exactly one call with a short-lived `CALL <code>`, and supervise the call entirely through text.
+**An open-source, self-hosted AI phone agent that calls customer support for you — and reports back entirely in text.**
 
-The core invariant is simple: no important information, warning, request, decision, commitment, or call state exists only in audio.
+You describe the problem. Liaison writes a plan. You approve it. It makes exactly one call, narrates the whole thing over SMS or a web thread, and asks before it does anything that matters.
 
-Liaison is free software under the [GNU Affero General Public License v3.0](LICENSE). It is a personal-instance application, not a hosted SaaS, call center, campaign messenger, or general-purpose autonomous caller.
+[![CI](https://github.com/kaushika05/liaison/actions/workflows/ci.yml/badge.svg)](https://github.com/kaushika05/liaison/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6.svg)](tsconfig.json)
+[![Runs offline](https://img.shields.io/badge/default%20mode-no%20API%20keys-success.svg)](#try-it-in-60-seconds)
 
-## How it works
+</div>
 
-1. Send a natural-language request through the authenticated web thread or the configured owner SMS number.
-2. Liaison asks concise questions for genuinely missing information. It never discovers or invents a support number.
-3. Review the versioned plan, destination, goal, autonomy mode, authority, conditional limits, prohibited actions, and uncertainty.
-4. Reply `APPROVE PLAN`. Liaison issues a random, expiring, single-use code bound to that approved plan, destination, and call mode.
-5. Reply exactly `CALL <code>` when you are available. Nothing else starts the call.
-6. Follow semantic text updates instead of an audio-only experience. Pause, resume, steer privately, request exact safe speech, or use a confirmed hang-up command.
-7. Resolve narrow low-consequence choices with `A`, `B`, or `C`. Sensitive and material decisions move to an authenticated, short-lived, single-use web action. Prohibited actions have no approval path.
-8. Receive a terminal result with verified commitments and exact transcript evidence. Unsupported conclusions remain unresolved.
+---
 
-## What is implemented
+## Why this exists
 
-- A unified secure web-messaging thread and optional owner-allowlisted Twilio SMS surface.
-- Natural-language case collection with explicit missing fields and deterministic command parsing before model interpretation.
-- Inspectable support-thread states, plan versions, `ASSIST` / `COPILOT` / `DELEGATE` modes, authority envelopes, conditional rules, attention tiers, commitments, disclosures, and outcomes.
-- Exact short-lived call authorization stored as a one-way hash, invalidated by relevant plan or mode changes, and consumed transactionally once.
-- A durable SQLite inbox, outbox, audit history, work claims, delivery events, and restart recovery in one deployable process.
-- Provider-neutral `WebMessagingAdapter` and `TwilioSmsMessagingAdapter` boundaries plus simulator and Twilio telephony adapters.
-- SMS segment estimation and composition that preserves required action, expiry, amount, consequence, and secure-link fragments before optional detail.
-- Twilio inbound/status signature validation, account/destination checks, exact owner allowlisting, duplicate-message handling, delivery reduction, opt-out state, and MMS rejection without downloading media.
-- A tested call state machine, speaker-labeled redacted transcript, semantic updates, pause/resume, private steering, exact text, interruption invalidation, attention handling, and safe termination.
-- Optional Twilio Calls API plus `<Connect><ConversationRelay>` with signed HTTP callbacks, signed WebSocket setup, identity checks, DTMF, speech, interruption handling, and terminal status processing.
-- Optional OpenAI Responses API planning, control, and outcome extraction using strict Zod structured outputs. Deterministic mock mode remains the default.
-- Evidence-grounded reports, commitments, JSON/text export, and a dedicated complete messaging-workflow simulator scenario.
-- Keyboard operation, semantic status, visible focus, urgent-focus movement, large text, high contrast, reduced motion, responsive layouts, and text-only status parity.
-- Interactive setup, a no-provider doctor, protocol schema generation, deterministic messaging demo, Docker/Compose, Railway configuration, retention tooling, CI, and operator documentation.
+Being on hold is a tax on your time, and it is worse if calling is hard for you — hearing loss, anxiety, a speech difference, a language barrier, a job where you cannot step away for forty minutes.
 
-## Quick start: no credentials and no provider charges
+Hosted AI callers (Pine and friends) solve the waiting. They also mean handing a stranger's server your account details, your recordings, and the authority to agree to things on your behalf. You get a summary afterward and no way to check it.
 
-Requirements: Node.js 22 or newer.
+Liaison is the self-hosted answer. It runs as one Node process on your own machine or VPS, against **your** Twilio and OpenAI accounts. Nothing is sent to a vendor. And its central rule is a design constraint, not a feature:
+
+> **Nothing important ever exists only in audio.** Every warning, request, decision, commitment, and state change reaches you as text you can read, quote, and export.
+
+It ships with a deterministic simulator, so you can run the entire product — intake, planning, authorization, a live "call," approvals, and a grounded outcome report — with **zero API keys and zero charges.**
+
+## Try it in 60 seconds
+
+Requires Node.js 22+. No Twilio account. No OpenAI key. No phone call.
 
 ```bash
+git clone https://github.com/kaushika05/liaison.git && cd liaison
 npm ci
 npm run setup -- --defaults --output=.env
-npm run doctor
 npm run dev
 ```
 
-`npm run setup` creates independent local secrets and prints the generated access key once. Store that key, then open `http://localhost:3000` and sign in. The non-interactive defaults are:
-
-```text
-LLM_MODE=mock
-MESSAGING_MODE=web
-ALLOW_REAL_MESSAGING=false
-TELEPHONY_MODE=simulator
-ALLOW_REAL_CALLS=false
-```
-
-This path does not call OpenAI, send SMS, or place a telephone call. It uses the same support-thread state, plan authority, durable message store, policy, call service, attention flow, and outcome compiler used by provider modes.
-
-On Windows PowerShell, the commands are the same. If you prefer to configure every field interactively, run `npm run setup` without `--defaults`.
-
-### Run the deterministic vertical slice
-
-```bash
-npm run demo:messaging
-```
-
-The demo exercises the text-first workflow in web/mock/simulator modes and exits without external provider requests. It is useful for installation checks and regression evidence; it is not a live Twilio test.
-
-### Try the browser thread
-
-Send one message containing synthetic details, for example:
+`setup` generates independent local secrets and prints an access key once — save it. Open `http://localhost:3000`, sign in, and paste this into the thread:
 
 ```text
 I need Acme support at +12025550123. A replacement shipment never arrived.
 The order was placed last Tuesday. I want a replacement with a confirmed delivery date.
 ```
 
-Liaison will ask for anything still required, return an inspectable plan, and wait for `APPROVE PLAN`. When it supplies a code, copy the exact `CALL <code>` command into the thread to run the dedicated messaging simulator scenario.
+Liaison will ask for anything missing, hand back an inspectable plan, and wait for you to type `APPROVE PLAN`. It then issues a one-time code; reply `CALL <code>` and the simulated call runs end to end.
 
-Use only synthetic information in development. Do not use a real account, representative, or destination without permission.
+Prefer the terminal? `npm run demo:messaging` drives the same path headlessly and exits non-zero if anything regresses.
 
-## Messaging commands
+## How it works
 
-Commands are case-insensitive after surrounding whitespace is removed and are parsed before natural-language model classification.
+```
+you ──► describe the problem in plain language
+        │
+        ▼
+     PLAN v1  ── goal, destination, autonomy mode, authority envelope,
+        │        conditional limits, prohibited actions, what's still unknown
+        │
+   APPROVE PLAN
+        │
+        ▼
+    one-time code ── bound to this plan version, this number, this call mode.
+        │             expires in 10 min. editing the plan kills it.
+     CALL <code>
+        │
+        ▼
+   ┌─── the call ────────────────────────────────────────────────┐
+   │ semantic updates ────────────────► "reached billing"        │
+   │ trivial choice   ────────────────► reply A / B / C          │
+   │ sensitive or material decision ──► signed single-use web link│
+   │ prohibited ──────────────────────► refused. no approval path.│
+   └─────────────────────────────────────────────────────────────┘
+        │
+        ▼
+  outcome report ── every claim carries an exact transcript quote,
+                    or it does not appear in the report
+```
+
+You keep persistent control the entire time: `PAUSE`, `RESUME`, `SAY: <exact words>`, private steering the representative never hears, and `HANGUP` → `HANGUP YES`.
+
+## What makes it different
+
+**Approval is cryptographically scoped, not a button.** Approving a plan mints a random code whose HMAC is stored alongside the exact thread, case, plan version, destination, and call mode. Change the goal, the number, or the autonomy mode and the code stops working. Consuming it is a single transaction, so a replayed code starts nothing.
+
+**Autonomy changes how often it asks, never what it may do.** `ASSIST`, `COPILOT`, and `DELEGATE` are interaction presets. Underneath, every proposed action is scored by deterministic code — not by the model — into one of five tiers:
+
+| Tier | What happens |
+| --- | --- |
+| `INFORMATIONAL` | You get a one-line update. |
+| `LOW_CONSEQUENCE` | Reply `A` / `B` / `C` from SMS or the web. |
+| `SENSITIVE` | Authenticated web review only. Never over SMS. |
+| `MATERIAL` | Authenticated web review **plus** explicit confirmation. |
+| `PROHIBITED` | Refused. There is no path that approves it. |
+
+Purchases, passwords, one-time codes, full SSNs, payment cards, PINs, security answers, recovery codes, new contracts, impersonation, and waiving legal rights are hard-denied in every mode. Emergency, medical, legal, financial, government, debt, employment, immigration, and law-enforcement calls are out of scope by design.
+
+**Reports cannot hallucinate.** Every field in the outcome report must cite an exact quote that still exists in the stored transcript. Fields that fail the check are deleted rather than softened, and "we'll look into it" is downgraded from `RESOLVED` to `PARTIAL` automatically.
+
+**Secrets have a deliberately short life.** Values you allow the agent to say (an order number, say) live only in a process-local map. SQLite gets the label and the delivery rules, never the value. Restart the server and they are gone on purpose. Prohibited credential patterns are stripped before anything is stored, logged, or sent to a model.
+
+**It tells you when it doesn't know.** If Twilio may or may not have accepted a call, Liaison says so, blocks further calls, and asks you to check the dashboard. It does not retry, redial, or guess. There is one active call, a daily cap, and a hard duration ceiling.
+
+## Commands
+
+Case-insensitive, parsed by deterministic code *before* any model sees the message.
 
 | Command | Effect |
 | --- | --- |
-| `NEW` | Begin a new support request. |
-| `STATUS` | Return current thread, case, call, and attention status. |
-| `EDIT` or `LINK` | Open the authenticated web surface for review or editing. |
-| `APPROVE PLAN` | Approve the current plan and issue a one-time call code. |
-| `CALL <code>` | Start only the exact approved plan bound to that code. |
-| `A`, `B`, or `C` | Resolve the one pending, unexpired low-consequence choice. |
-| `MODE ASSIST` | Require owner-authored substantive responses. |
-| `MODE COPILOT` | Ask on consequential or ambiguous choices. This is the default. |
-| `MODE DELEGATE` | Proceed inside approved authority and ask at hard boundaries. |
-| `PAUSE` / `RESUME` | Pause or resume autonomous call replies while transcription continues. |
-| `SAY: <text>` | Request exact speech after deterministic safety checks. |
-| `HANGUP`, then `HANGUP YES` | Request and confirm call termination. |
-| `CANCEL` | Cancel preparation; it does not silently terminate an active call. |
-| `STOP` / `START` / `HELP` | Manage messaging consent or request concise help. `STOP` does not hang up a call. |
-
-Autonomy modes change interaction frequency, never authority. Hard-denied actions remain denied in every mode.
-
-## Attention and authority
-
-Deterministic code assigns the final tier for a proposed action:
-
-| Tier | Owner interaction |
-| --- | --- |
-| `INFORMATIONAL` | Concise semantic update; no decision. |
-| `LOW_CONSEQUENCE` | Exact A/B/C choice may be accepted through SMS or web while pending and unexpired. |
-| `SENSITIVE` | Authenticated secure web review; never resolved by SMS. |
-| `MATERIAL` | Authenticated secure web review plus explicit confirmation. |
-| `PROHIBITED` | Refused; no link, mode, or owner message can approve it. |
-
-Passwords, one-time codes, full payment-card information, full Social Security numbers, PINs, security answers, recovery codes, purchases, new contracts, impersonation, and waiver of legal rights are prohibited. Emergency, medical, legal, financial, insurance, government, debt, employment, immigration, and law-enforcement workflows are outside the product's supported scope.
+| `NEW` | Start a new support request. |
+| `STATUS` | Thread, case, call, and pending-decision status. |
+| `APPROVE PLAN` | Approve the current plan and mint a one-time call code. |
+| `CALL <code>` | Start exactly the plan bound to that code. |
+| `A` / `B` / `C` | Answer the one pending low-consequence choice. |
+| `MODE ASSIST\|COPILOT\|DELEGATE` | Change how often it asks. Never what it may do. |
+| `PAUSE` / `RESUME` | Stop or resume autonomous replies. Transcription continues. |
+| `SAY: <text>` | Speak your exact words after safety checks. |
+| `HANGUP` → `HANGUP YES` | Request and confirm hanging up. |
+| `EDIT` / `LINK` | Open the authenticated web app. |
+| `CANCEL` | Cancel preparation. Does not silently end a live call. |
+| `STOP` / `START` / `HELP` | Messaging consent and help. `STOP` does not hang up. |
 
 ## Architecture
 
-Liaison is a modular monolith: one Fastify process owns authentication, the messaging orchestrator and worker, deterministic policy, call supervision, Twilio callbacks/WebSockets, SSE, SQLite, and the React client.
+One Fastify process owns everything: auth, the messaging orchestrator and its worker, deterministic policy, call supervision, Twilio webhooks and WebSockets, SSE, SQLite, and the React client. No Redis, no external database, no separate worker service.
 
 ```mermaid
 flowchart LR
@@ -135,118 +140,88 @@ flowchart LR
   Calls --> Twilio["Twilio ConversationRelay"]
 ```
 
-Inbound messages are persisted before interpretation. Inbound work receives bounded retries and then becomes inspectable dead-letter work. Outbound intents are persisted before submission, but ambiguous provider-send failures are deliberately not retried automatically because the provider may already have accepted the SMS; the failed row remains visible for operator review. An expired inbound-work lease can be reclaimed, while an expired outbound-send lease becomes an `UNKNOWN` dead letter and is never automatically resent. The system therefore does not claim impossible exactly-once carrier semantics.
+SQLite is both the system of record and the work queue. Inbound messages are persisted before they are interpreted; outbound intents are persisted before they are sent. Inbound work gets bounded retries and then becomes inspectable dead-letter work. An ambiguous *outbound* failure is deliberately **not** retried — the carrier may already have the message — so the row stays visible for you to judge.
 
-Delivery callbacks can be late, duplicated, or reordered. Liaison reduces them by semantic progression and retains failure detail. Provider `accepted` or `queued` means accepted for processing, not delivered to the owner's handset.
+Delivery callbacks arrive late, duplicated, and out of order. A reducer advances state by semantic progression rather than arrival time, so a stale `queued` cannot erase a known failure. Liaison never claims exactly-once carrier delivery, because that does not exist.
 
-See [Architecture](docs/ARCHITECTURE.md), [Messaging protocol](docs/MESSAGING_PROTOCOL.md), and [Provider adapters](docs/PROVIDER_ADAPTERS.md).
+More: [Architecture](docs/ARCHITECTURE.md) · [Messaging protocol](docs/MESSAGING_PROTOCOL.md) · [Provider adapters](docs/PROVIDER_ADAPTERS.md) · [Design principles](docs/DESIGN_PRINCIPLES.md)
 
-## Self-hosting and Docker
+## Going live
 
-For a production deployment, use [SELF_HOSTING.md](docs/SELF_HOSTING.md) and the [deployment checklist](docs/DEPLOYMENT_CHECKLIST.md). The included Compose file runs one app service and one named SQLite volume—no Redis or external database.
+Real SMS and real calls each need **two** switches flipped, plus credentials. That is intentional.
 
-```bash
-docker compose build
-docker compose up -d
-```
-
-Before using Compose, copy `.env.example` to `.env`, replace all production secrets, set exact public HTTPS/WSS origins, and keep both real-use flags false. Production refuses missing core secrets or plain HTTP/WSS public origins. Put Liaison behind a trusted TLS reverse proxy; `examples/Caddyfile` is an optional starting point.
-
-SQLite must be on persistent writable storage. Back it up with a stopped-volume snapshot or SQLite online-backup tooling, encrypt and retain backups deliberately, and test restoration with provider use disabled.
-
-## Optional Twilio SMS and voice
-
-Follow [TWILIO_SETUP.md](docs/TWILIO_SETUP.md) rather than enabling everything at once.
-
-Twilio SMS uses these exact public POST endpoints:
-
-```text
-/webhooks/twilio/messaging/inbound
-/webhooks/twilio/messaging/status
-```
-
-Live messaging requires the owner E.164 number, Twilio credentials, a Messaging Service SID or SMS sender, `MESSAGING_MODE=twilio_sms`, and `ALLOW_REAL_MESSAGING=true`.
-
-Voice callbacks use short-lived signed-token paths:
-
-```text
-/webhooks/twilio/voice/<signed-token>
-/webhooks/twilio/status/<signed-token>
-/webhooks/twilio/conversation-action/<signed-token>
-/webhooks/twilio/conversation-relay/<signed-token>
-```
-
-Live voice requires completed ConversationRelay onboarding, Twilio credentials and a voice sender, `TELEPHONY_MODE=twilio`, and `ALLOW_REAL_CALLS=true`.
-
-Twilio signs the exact URL it requests. `PUBLIC_BASE_URL` / `PUBLIC_WSS_URL` and reverse-proxy behavior must match the external scheme, host, port, path, and encoded query. Do not disable signature validation to work around a mismatch.
-
-## Security, privacy, and cost boundaries
-
-- Liaison accepts one configured SMS owner and one authenticated browser principal. It is not multi-tenant identity infrastructure.
-- SMS is carrier-visible and possession of a phone number is weaker than cryptographic identity. Sensitive and material decisions stay in the authenticated web app.
-- `STOP` records an opted-out state. The worker refuses later unsent Twilio submissions and marks such claimed rows failed; it cannot recall a message already accepted by Twilio or a carrier.
-- Inbound MMS is rejected and media is not downloaded.
-- Prohibited credential patterns are replaced before persistence, logging, model input, or orchestration. Pattern matching cannot detect every secret.
-- The application does not request call recording or intentionally retain audio. Twilio ConversationRelay and its speech providers necessarily process telephone audio.
-- Temporary supported disclosure values live only in server memory and are excluded from SQLite, models, SMS, SSE, ordinary logs, and stored transcripts. Restart deliberately loses them.
-- The current US-number and keyword risk checks are safety layers, not proof that a destination or issue is appropriate.
-- There is one active call, a daily cap, a hard duration, no scheduled/background calling, no automatic call retry, and no redial.
-- SMS segment and call-minute costs are configurable estimates, not invoices. Provider pricing, registration, number rental, taxes, carrier fees, and model tokens remain the operator's responsibility.
-
-Read [Application security](docs/SECURITY.md), [Security reporting](SECURITY.md), [Privacy](docs/PRIVACY.md), and [Costs](docs/COSTS.md) before enabling providers.
-
-## Validation and live-provider boundary
-
-The repository includes unit tests for policy, protocol, state, messaging adapters, composition, delivery reduction, database durability, authorization, and telephony; integration tests for authentication and deterministic simulator scenarios; a Playwright browser workflow; production builds; and container CI.
-
-Run:
+**Deploy** — see [SELF_HOSTING.md](docs/SELF_HOSTING.md) and the [deployment checklist](docs/DEPLOYMENT_CHECKLIST.md).
 
 ```bash
-npm run check
-npm run test:e2e
-npm run demo:messaging
-docker build --tag liaison:local .
+cp .env.example .env   # replace every secret, set exact HTTPS/WSS origins
+docker compose build && docker compose up -d
 ```
 
-Automated tests use mock clients, signed synthetic requests, web messaging, and the simulator. They do not register a sender, send a carrier SMS, place a PSTN call, verify a Twilio account's ConversationRelay terms, prove handset delivery, spend OpenAI credits, or validate a particular deployment's TLS/proxy configuration. Passing tests are not live Twilio validation. Record real-provider evidence separately and only from owned or consenting destinations.
+Production refuses to start on missing secrets, secrets under 32 characters, reused secrets, or plain-HTTP public origins. Put it behind a TLS reverse proxy (`examples/Caddyfile` is a starting point) and keep SQLite on persistent, writable, backed-up storage.
 
-The pre-migration preservation point and its exact results are recorded in [MIGRATION_BASELINE.md](docs/MIGRATION_BASELINE.md). Current release results should be reported from the commands actually run against the current revision, not inferred from that baseline.
+**SMS** — needs `MESSAGING_MODE=twilio_sms`, `ALLOW_REAL_MESSAGING=true`, your owner number in E.164, Twilio credentials, and a Messaging Service SID or SMS sender. Webhooks:
 
-## Commands
+```text
+POST /webhooks/twilio/messaging/inbound
+POST /webhooks/twilio/messaging/status
+```
+
+**Voice** — needs `TELEPHONY_MODE=twilio`, `ALLOW_REAL_CALLS=true`, completed ConversationRelay onboarding, and a voice-capable sender. Callbacks use short-lived signed-token paths under `/webhooks/twilio/{voice,status,conversation-action,conversation-relay}/<token>`.
+
+Twilio signs the exact URL it requests, so `PUBLIC_BASE_URL` / `PUBLIC_WSS_URL` and your proxy must agree on scheme, host, port, and path. Do not disable signature validation to paper over a mismatch. Full walkthrough: [TWILIO_SETUP.md](docs/TWILIO_SETUP.md).
+
+**Models** — `LLM_MODE=openai` with your key enables OpenAI planning, control, and outcome extraction via strict Zod structured outputs. Mock mode stays the default and is fully functional.
+
+## Scripts
 
 | Command | Purpose |
 | --- | --- |
-| `npm run setup` | Interactively generate `.env`, independent secrets, and safe provider defaults. |
-| `npm run doctor` | Check runtime/configuration/database prerequisites without provider or model calls. |
-| `npm run dev` | Run Fastify with Vite development middleware. |
-| `npm run demo:messaging` | Run the deterministic no-provider messaging vertical slice. |
-| `npm run protocol:generate` | Generate protocol v1 JSON Schemas and validate checked-in examples. |
-| `npm run lint` | Run ESLint. |
-| `npm run typecheck` | Type-check client, server, and tool projects. |
-| `npm run test:unit` | Run unit tests. |
-| `npm run test:integration` | Run integration and simulator tests. |
-| `npm run test:e2e` | Run the Playwright browser workflow. |
-| `npm run check` | Lint, type-check, run Vitest, and build production artifacts. |
-| `npm run build` | Build the React client and Node.js server. |
+| `npm run setup` | Generate `.env`, independent secrets, and safe defaults. |
+| `npm run doctor` | Check runtime, config, and database prerequisites. No provider calls. |
+| `npm run dev` | Fastify plus Vite dev middleware. |
+| `npm run demo:messaging` | Deterministic no-provider vertical slice. |
+| `npm run check` | Lint, typecheck, all tests, production build. |
+| `npm run test:unit` / `test:integration` / `test:e2e` | Vitest units, integration, Playwright. |
+| `npm run protocol:generate` | Emit protocol v1 JSON Schemas and validate examples. |
+| `npm run retention` | Delete completed cases past the retention window. |
 | `npm start` | Run the production build. |
-| `npm run retention` | Delete eligible completed cases in source mode. |
-| `npm run retention:production` | Run retention from the production build. |
 
-## Documentation
+## Honest limits
 
-- [Self-hosting](docs/SELF_HOSTING.md)
-- [Twilio setup](docs/TWILIO_SETUP.md)
-- [Deployment checklist](docs/DEPLOYMENT_CHECKLIST.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Messaging protocol](docs/MESSAGING_PROTOCOL.md)
-- [Universal Support Protocol](docs/UNIVERSAL_SUPPORT_PROTOCOL.md)
-- [Provider adapters](docs/PROVIDER_ADAPTERS.md)
-- [Design principles](docs/DESIGN_PRINCIPLES.md)
-- [Security](docs/SECURITY.md)
-- [Privacy](docs/PRIVACY.md)
-- [Costs](docs/COSTS.md)
-- [Roadmap and explicit non-goals](docs/ROADMAP.md)
-- [Future open-source voice research](docs/OPEN_SOURCE_VOICE_MIGRATION.md)
-- [Changelog](CHANGELOG.md)
+Worth reading before you trust it with anything real.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the mock-first contribution workflow and [SUPPORT.md](SUPPORT.md) for community support boundaries. Report vulnerabilities privately through [SECURITY.md](SECURITY.md).
+- **One owner.** One SMS number, one browser principal. This is not multi-tenant identity infrastructure.
+- **SMS is not strong auth.** Possessing a phone number is weaker than a key, and carriers see the content. Sensitive and material decisions stay in the authenticated web app for exactly that reason.
+- **`STOP` cannot recall a sent message.** It records opt-out and refuses future sends; Twilio may already have accepted the last one.
+- **Pattern matching misses secrets.** The credential redactor is a safety layer, not a proof.
+- **Liaison does not verify phone numbers.** You supply the support line. It checks the format, not who owns it.
+- **Audio is processed by your providers.** Liaison does not request recording or retain audio, but Twilio ConversationRelay and its speech vendors necessarily hear the call.
+- **Costs shown are estimates, not invoices.** Provider pricing, number rental, A2P registration, taxes, carrier fees, and model tokens are yours.
+- **Passing tests are not live-provider validation.** The suite uses mock clients, signed synthetic requests, and the simulator. It never registers a sender, sends a carrier SMS, places a PSTN call, or spends OpenAI credits.
+
+[Security](docs/SECURITY.md) · [Privacy](docs/PRIVACY.md) · [Costs](docs/COSTS.md) · [Roadmap and non-goals](docs/ROADMAP.md)
+
+## Validating a change
+
+```bash
+npm run check          # lint + typecheck + 145 tests + production build
+npm run test:e2e       # Playwright browser workflow
+npm run demo:messaging # deterministic vertical slice
+docker build -t liaison:local .
+```
+
+CI runs all of it on every push, plus a check that the generated protocol schemas are current.
+
+## Contributing
+
+Contributions are welcome, especially accessibility testing, provider adapters, and adversarial policy cases. Work in mock mode by default — see [CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities privately per [SECURITY.md](SECURITY.md).
+
+## License
+
+[GNU AGPL-3.0-or-later](LICENSE). Personal-instance software: not a hosted SaaS, call center, campaign messenger, or general-purpose autonomous dialer. No warranty.
+
+---
+
+<div align="center">
+<sub><b>Keywords:</b> open source AI phone agent · self-hosted voice AI · AI calls customer service for you · Pine alternative · Twilio ConversationRelay · accessible telephony · human-in-the-loop AI · AI customer support automation · TypeScript · SQLite</sub>
+</div>

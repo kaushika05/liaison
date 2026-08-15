@@ -52,7 +52,7 @@ This design gives personal-instance durability without claiming exactly-once beh
 
 The support thread has an explicit state machine from `IDLE` through issue collection, information requests, drafted/approved planning, call authorization, active call, attention, and one terminal outcome. Illegal transitions fail closed.
 
-The planner produces a versioned `ExecutionPlan` that includes:
+The planner produces a versioned `CallBrief` — the runtime plan record — that includes:
 
 - the owner-stated goal and known facts;
 - the manually supplied support destination;
@@ -126,7 +126,14 @@ Commitments have party, status, description, optional amount/deadline/recurrence
 
 ## Protocol artifacts
 
-Zod schemas in `src/shared/protocol.ts` are canonical. `npm run protocol:generate` emits JSON Schema 2020-12 documents and validates examples under `protocol/v1`. Protocol parsing occurs at trust boundaries; generated artifacts support inspectability and third-party tooling but do not replace runtime validation.
+Zod schemas in `src/shared/protocol.ts` are canonical. `npm run protocol:generate` emits JSON Schema 2020-12 documents and validates examples under `protocol/v1`.
+
+Two groups live in that file, and the distinction matters:
+
+- **Enforced at runtime.** `attentionTierSchema` and `assignAttentionTier`, `semanticCallEventSchema` and its dedup keys, `conditionalAuthorityRuleSchema` and `evaluateConditionalAuthority`, `autonomyModeSchema`, `supportThreadStateSchema`, and `messagingIntentClassificationSchema` are parsed and enforced on the live path.
+- **Proposed interop contracts, not yet wired in.** `SupportIntent`, `ExecutionPlan`, and the protocol-level `AttentionRequest`, `Commitment`, and `DisclosureEvent` describe how a second implementation could exchange these objects. The reference implementation currently persists the equivalent runtime records defined in `src/server/database/db.ts` and `src/shared/domain.ts` instead. They are versioned, tested, and schema-generated so the contract is reviewable, but no code path depends on them today.
+
+Generated artifacts support inspectability and third-party tooling; they do not replace runtime validation.
 
 ## Secret lifecycle and failure modes
 

@@ -117,6 +117,7 @@
         "REJECTED",
         "REPLACED",
         "EXPIRED",
+        "SUPERSEDED",
         "CANCELLED"
       ]
     },

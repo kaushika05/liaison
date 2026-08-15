@@ -2,7 +2,7 @@ import type { ApprovalRequest, CallBrief, CallState, OutcomeReport, PublicConfig
 import type { AttentionTier, AutonomyMode, ConditionalAuthorityRule, SupportThreadState } from "./protocol.js";
 
 export interface CaseSummary { id: string; companyName: string; title: string; status: string; updatedAt: string }
-export interface CaseDetail extends CaseSummary { intake: Record<string, unknown>; brief: CallBrief | null; approvedVersion: number | null; disclosures: Array<{ id: string; label: string; category: string; permission: string; allowedChannels: string[]; allowedPurposes: string[]; redactInLogs: true }> }
+export interface CaseDetail extends CaseSummary { createdAt: string; intake: Record<string, unknown>; brief: CallBrief | null; approvedVersion: number | null; disclosures: Array<{ id: string; label: string; category: string; permission: string; allowedChannels: string[]; allowedPurposes: string[]; redactInLogs: true }> }
 export interface CallSnapshot {
   id: string; caseId: string; mode: "SIMULATOR" | "TWILIO"; scenarioId: string | null; state: CallState; activity: string;
   currentObjective: string; paused: boolean; humanDetected: boolean; disclosureDelivered: boolean; consentStatus: "UNKNOWN" | "ACCEPTED" | "REFUSED" | "AMBIGUOUS";
@@ -32,7 +32,7 @@ export interface MessagingCommitmentSummary {
 export interface MessagingThreadSnapshot {
   thread:MessagingThreadSummary; messages:MessagingThreadMessage[]; case:CaseDetail|null; call:CallSnapshot|null;
   attention:MessagingAttentionSummary|null; commitments:MessagingCommitmentSummary[]; conditionalAuthorityRules:ConditionalAuthorityRule[]; configuration:PublicConfig;
-  failedDeliveries:number; deadLetterWork:number;
+  failedDeliveries:number; deadLetterWork:number; rejectedProviderRequests:number; estimatedMessagingSpendUsd:number;
 }
 export interface SecureActionDetail {
   tokenState:"VALID"; actionType:string; attention:MessagingAttentionSummary; case:CaseDetail|null; call:CallSnapshot|null;
