@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Liaison — the open-source AI phone agent that calls customer support for you</title>
+    <meta
+      name="description"
+      content="Liaison is a free, self-hosted AI phone agent that calls customer support on your behalf and reports back entirely in text. Runs on your own Twilio and OpenAI accounts. AGPL-3.0."
+    />
+    <link rel="canonical" href="https://liaison-rho.vercel.app/" />
+    <meta name="theme-color" content="#174238" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Liaison — the open-source AI phone agent for customer support" />
+    <meta
+      property="og:description"
+      content="Describe the problem in plain language, approve an inspectable plan, and supervise the whole call as text. Self-hosted, human-in-the-loop, AGPL-3.0."
+    />
+    <meta property="og:image" content="https://liaison-rho.vercel.app/liaison-still.png" />
+    <meta property="og:url" content="https://liaison-rho.vercel.app/" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%2324594b'/%3E%3Cg transform='translate(4 4) scale(1)' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0'/%3E%3Cpath d='M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4'/%3E%3C/g%3E%3C/svg%3E"
+    />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Liaison",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Linux, macOS, Windows",
+        "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+        "codeRepository": "https://github.com/kaushika05/liaison",
+        "description": "An open-source, self-hosted AI phone agent that calls customer support on your behalf and reports back entirely in text.",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      }
+    </script>
+
+    <style>
+      /* Tokens lifted from the application's own stylesheet so the site and the product read as
+         one thing rather than a marketing page bolted onto a different design. */
+      :root {
+        --ink: #19231f;
+        --muted: #63706a;
+        --paper: #fff;
+        --line: #d8ded9;
+        --accent: #24594b;
+        --accent-deep: #174238;
+        --accent-pale: #e0eee9;
+        --shadow: 0 18px 50px rgba(24, 44, 36, 0.08);
+        font-family: Inter, "Segoe UI", system-ui, sans-serif;
+        color: var(--ink);
+        font-synthesis: none;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-width: 320px;
+        background: var(--paper);
+      }
+      a:focus-visible,
+      :focus-visible {
+        outline: 3px solid #d6922d;
+        outline-offset: 3px;
+        border-radius: 4px;
+      }
+
+      .shell {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: minmax(0, 1.05fr) minmax(380px, 0.95fr);
+      }
+
+      .pitch {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        max-width: 720px;
+        padding: 3rem clamp(1.6rem, 5vw, 5rem);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        margin-bottom: 1.8rem;
+      }
+      .brand-mark {
+        width: 42px;
+        height: 42px;
+        border-radius: 13px;
+        background: var(--accent);
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+      }
+      .brand-mark svg {
+        width: 23px;
+        height: 23px;
+      }
+      .brand span {
+        margin-left: 0.7rem;
+      }
+      .brand strong {
+        display: block;
+        font-size: 1.05rem;
+      }
+      .brand small {
+        display: block;
+        color: var(--muted);
+        font-weight: 500;
+        margin-top: 0.1rem;
+      }
+
+      .eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 0.11em;
+        font-size: 0.73rem;
+        font-weight: 800;
+        color: var(--accent);
+        margin: 0 0 0.55rem;
+      }
+      h1 {
+        font-family: Georgia, "Times New Roman", serif;
+        font-weight: 500;
+        font-size: clamp(2.2rem, 3.5vw, 3.35rem);
+        line-height: 1.06;
+        letter-spacing: -0.035em;
+        margin: 0.2rem 0 1rem;
+      }
+      .lede {
+        font-size: 1.08rem;
+        line-height: 1.65;
+        color: var(--muted);
+        margin: 0 0 1.5rem;
+        max-width: 60ch;
+      }
+      .lede b {
+        color: var(--ink);
+        font-weight: 650;
+      }
+
+      ul.points {
+        list-style: none;
+        margin: 0 0 1.7rem;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.7rem;
+        max-width: 62ch;
+      }
+      ul.points li {
+        display: grid;
+        grid-template-columns: 20px 1fr;
+        gap: 0.7rem;
+        line-height: 1.5;
+        color: var(--muted);
+        font-size: 0.97rem;
+      }
+      ul.points svg {
+        width: 18px;
+        height: 18px;
+        color: var(--accent);
+        margin-top: 0.22rem;
+      }
+      ul.points b {
+        color: var(--ink);
+        font-weight: 650;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+      }
+      .btn {
+        min-height: 44px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--paper);
+        color: var(--ink);
+        padding: 0.7rem 1.15rem;
+        font-weight: 700;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .btn:hover {
+        border-color: #9ca9a2;
+        background: #fafcfb;
+      }
+      .btn svg {
+        width: 18px;
+        height: 18px;
+      }
+      .btn.primary {
+        color: #fff;
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      .btn.primary:hover {
+        background: var(--accent-deep);
+      }
+
+      .install {
+        margin: 1.1rem 0 0;
+        background: #f3f5f2;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 0.85rem 1rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.84rem;
+        color: var(--ink);
+        overflow-x: auto;
+      }
+      .install span {
+        color: var(--muted);
+        user-select: none;
+      }
+
+      .trust {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        color: var(--muted);
+        font-size: 0.85rem;
+        margin-top: 1.1rem;
+      }
+      .trust svg {
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+      }
+
+      /* Right panel mirrors the application's sign-in aside. */
+      .demo {
+        background: var(--accent-deep);
+        color: #fff;
+        padding: clamp(2rem, 4vw, 3.5rem);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 1.4rem;
+      }
+      .demo figure {
+        margin: 0;
+      }
+      .demo img {
+        width: 100%;
+        height: auto;
+        display: block;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
+      }
+      .demo figcaption {
+        margin-top: 1.1rem;
+        font-size: 0.9rem;
+        line-height: 1.6;
+        opacity: 0.8;
+        max-width: 62ch;
+      }
+      .demo figcaption b {
+        opacity: 1;
+        font-weight: 650;
+      }
+      .demo .label {
+        text-transform: uppercase;
+        letter-spacing: 0.11em;
+        font-size: 0.72rem;
+        font-weight: 800;
+        opacity: 0.68;
+        margin: 0;
+      }
+
+      footer {
+        grid-column: 1 / -1;
+        padding: 1.1rem 1.5rem;
+        text-align: center;
+        border-top: 1px solid var(--line);
+        background: var(--paper);
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+      footer a {
+        color: var(--accent-deep);
+        font-weight: 700;
+      }
+
+      @media (max-width: 1040px) {
+        .shell {
+          grid-template-columns: 1fr;
+        }
+        .pitch {
+          max-width: none;
+          padding: 3rem clamp(1.2rem, 6vw, 3rem) 2rem;
+        }
+        .demo {
+          padding: 2rem clamp(1.2rem, 6vw, 3rem) 3rem;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <main class="shell">
+      <section class="pitch" aria-labelledby="title">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <!-- Same ear mark the application uses, so the two surfaces share an identity. -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0" />
+              <path d="M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4" />
+            </svg>
+          </span>
+          <span>
+            <strong>Liaison</strong>
+            <small>Self-hosted support agent</small>
+          </span>
+        </div>
+
+        <p class="eyebrow">Open source · Self-hosted · AGPL-3.0</p>
+        <h1 id="title">Liaison calls customer support so you don&rsquo;t have to.</h1>
+
+        <p class="lede">
+          Describe the problem in plain language. Liaison writes an inspectable plan, waits for your approval, makes
+          exactly one call, and narrates the whole thing back to you as text.
+          <b>Nothing important ever exists only in audio.</b>
+        </p>
+
+        <ul class="points">
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span><b>It runs on your machine</b>, against your own Twilio and OpenAI accounts. No vendor holds your account details, your recordings, or the authority to agree to things for you.</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span><b>The model proposes; deterministic code decides.</b> Purchases, passwords, one-time codes, SSNs, and card numbers are refused in every mode — there is no path that approves them.</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            <span><b>One call per approval.</b> Approving mints a short-lived code bound to that exact plan, number, and mode. Edit anything and the code stops working.</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            <span><b>Every claim in the final report cites an exact transcript quote</b>, or it doesn&rsquo;t appear. &ldquo;We&rsquo;ll look into it&rdquo; is never reported as resolved.</span>
+          </li>
+        </ul>
+
+        <div class="actions">
+          <a class="btn primary" href="https://github.com/kaushika05/liaison">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.06-.72.08-.7.08-.7 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.73 1.27 3.4.97.1-.75.4-1.27.73-1.56-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.5 3.17-1.18 3.17-1.18.63 1.59.24 2.76.12 3.05.74.81 1.18 1.84 1.18 3.1 0 4.43-2.69 5.4-5.25 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5z"/></svg>
+            View the source on GitHub
+          </a>
+          <a class="btn" href="https://github.com/kaushika05/liaison#try-it-in-60-seconds">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m5 3 14 9-14 9V3z"/></svg>
+            Try it in 60 seconds
+          </a>
+        </div>
+
+        <p class="install"><span>$ </span>git clone https://github.com/kaushika05/liaison &amp;&amp; npm ci &amp;&amp; npm run dev</p>
+
+        <p class="trust">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Runs with zero API keys in mock mode · No project telemetry · Your deployment, your provider accounts
+        </p>
+      </section>
+
+      <section class="demo" aria-labelledby="demo-label">
+        <p class="label" id="demo-label">The whole workflow, no credentials required</p>
+        <figure>
+          <picture>
+            <source srcset="liaison-still.png" media="(prefers-reduced-motion: reduce)" />
+            <img
+              src="liaison-demo.gif"
+              width="940"
+              height="602"
+              alt="Liaison handling a billing dispute: a plain-language message becomes an inspectable plan with an authority boundary, approval mints a one-time call code, the call runs while a hold is resolved with an A/B/C choice, a material offer is refused because it conflicts with an approved conditional rule, and the outcome cites an exact transcript quote."
+            />
+          </picture>
+          <figcaption>
+            A real run in simulator mode: one message becomes a plan you can read, approval mints a single-use code,
+            and a retention offer is <b>refused because it conflicts with a rule you already approved</b> — the agent
+            has no button to accept it. The final report quotes the transcript line it came from.
+          </figcaption>
+        </figure>
+      </section>
+
+      <footer>
+        Free software under the
+        <a href="https://github.com/kaushika05/liaison/blob/main/LICENSE">GNU AGPL-3.0</a> ·
+        <a href="https://github.com/kaushika05/liaison">Source</a> ·
+        <a href="https://github.com/kaushika05/liaison/releases">Releases</a> ·
+        <a href="https://github.com/kaushika05/liaison/blob/main/docs/SECURITY.md">Security</a>
+        · A personal-instance application, not a hosted service. No warranty.
+      </footer>
+    </main>
+  </body>
+</html>

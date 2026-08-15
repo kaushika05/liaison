@@ -12,3 +12,7 @@ coverage/
 
 # Personal study material; not part of the published project.
 study-packet/
+
+# Vercel CLI artifacts for the landing page
+.vercel/
+site/.env.local
