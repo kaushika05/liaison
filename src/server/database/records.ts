@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Storage record shapes and row mappers.
  *
  * Split from db.ts so the query layer contains queries and this file contains the

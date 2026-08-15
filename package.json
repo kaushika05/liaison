@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "liaison",
   "version": "1.1.0",
   "private": true,
@@ -13,7 +13,8 @@
     "start": "node dist-server/server/index.js",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"scripts/**/*.ts\" \"*.{json,js,ts}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"scripts/**/*.ts\" \"*.{json,js,ts}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"tests/**/*.ts\" \"scripts/**/*.ts\" \"*.{json,js,ts}\" && npm run check:encoding",
+    "check:encoding": "tsx scripts/check-encoding.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.tools.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
